@@ -59,7 +59,12 @@ PM-activity-app-apk-/
 
 ## Current Status
 
-This is the **project scaffold** only. No camera, GPS, geofencing, Google
-Drive upload, dashboard, or PM business logic has been implemented yet.
-See `mobile_app/README.md` and `backend/README.md` for what exists in each
-part and how to run them.
+**Employee Login is implemented** (Flutter login screen + profile
+display, FastAPI `/auth/login` endpoint, `Employee` data model). It uses
+a development/test authentication mode (Employee ID + mobile number, no
+OTP) designed to be swapped for OTP-based auth later without changing
+the screens or endpoint — see `backend/README.md` ("Auth design").
+
+No camera, GPS, geofencing, Google Drive upload, dashboard, or PM visit
+logic has been implemented yet. See `mobile_app/README.md` and
+`backend/README.md` for details and how to run each part.

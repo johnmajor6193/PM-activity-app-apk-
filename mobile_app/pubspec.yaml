@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.6
+  http: ^1.2.0
 
   # Planned for later steps (not added yet, listed here for reference only):
   # geolocator            - GPS capture + accuracy
@@ -18,7 +19,6 @@ dependencies:
   # connectivity_plus     - network state for sync triggers
   # workmanager            - background sync
   # googleapis / google_sign_in - Google Drive upload
-  # dio / http              - REST client for backend API
 
 dev_dependencies:
   flutter_test:

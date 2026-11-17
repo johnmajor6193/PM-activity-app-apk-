@@ -13,5 +13,12 @@ class Settings(BaseSettings):
     app_name: str = "TANFINET POP PM Monitoring API"
     database_url: str = "postgresql://postgres:postgres@localhost:5432/tanfinet_pm"
 
+    # Auth. "dev" authenticates by Employee ID + mobile number lookup only,
+    # for local/test use. Swap to an "otp" strategy in a later step without
+    # changing the login endpoint (see app/services/auth/).
+    auth_mode: str = "dev"
+    secret_key: str = "dev-only-insecure-secret-change-in-production"
+    access_token_expire_minutes: int = 480
+
 
 settings = Settings()
