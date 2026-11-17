@@ -80,7 +80,7 @@ class _PopSelectionScreenState extends State<PopSelectionScreen> {
         border: const OutlineInputBorder(),
         suffixIcon: isLoading ? const _InlineSpinner() : null,
       ),
-      value: _controller.selectedDistrict,
+      initialValue: _controller.selectedDistrict,
       items: _controller.districts
           .map((d) => DropdownMenuItem(value: d, child: Text(d.name)))
           .toList(),
@@ -96,7 +96,7 @@ class _PopSelectionScreenState extends State<PopSelectionScreen> {
         border: const OutlineInputBorder(),
         suffixIcon: isLoading ? const _InlineSpinner() : null,
       ),
-      value: _controller.selectedBlock,
+      initialValue: _controller.selectedBlock,
       items: _controller.blocks
           .map((b) => DropdownMenuItem(value: b, child: Text(b.name)))
           .toList(),
@@ -113,7 +113,7 @@ class _PopSelectionScreenState extends State<PopSelectionScreen> {
         border: const OutlineInputBorder(),
         suffixIcon: isLoading ? const _InlineSpinner() : null,
       ),
-      value: _controller.selectedGp,
+      initialValue: _controller.selectedGp,
       items: _controller.gps.map((g) => DropdownMenuItem(value: g, child: Text(g.name))).toList(),
       onChanged: _controller.selectedBlock == null || isLoading ? null : _controller.selectGp,
     );
@@ -127,7 +127,7 @@ class _PopSelectionScreenState extends State<PopSelectionScreen> {
         border: const OutlineInputBorder(),
         suffixIcon: isLoading ? const _InlineSpinner() : null,
       ),
-      value: _controller.selectedPopSummary,
+      initialValue: _controller.selectedPopSummary,
       items: _controller.pops
           .map(
             (p) => DropdownMenuItem(

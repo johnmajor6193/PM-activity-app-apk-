@@ -31,7 +31,7 @@ class _FakeAuthRepository implements AuthRepository {
     required String mobileNumber,
   }) async {
     if (_failure != null) {
-      throw _failure!;
+      throw _failure;
     }
     return _result!;
   }

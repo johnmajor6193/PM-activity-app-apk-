@@ -29,7 +29,9 @@ class LocationService {
       );
     }
 
-    final position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+    final position = await Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+    );
 
     return GpsReading(
       latitude: position.latitude,
