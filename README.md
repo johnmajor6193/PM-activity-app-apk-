@@ -76,6 +76,13 @@ geofence validation is deferred until that data exists — see
 `docs/data-model.md` ("POP Geo-Coordinates — Deferred"). Per-photo GPS
 capture for PM visits is unaffected and still planned for a later module.
 
-No camera, GPS capture, geofencing, Google Drive upload, dashboard, or
-PM visit logic has been implemented yet. See `mobile_app/README.md` and
-`backend/README.md` for details and how to run each part.
+**PM Photo Capture is implemented** (Flutter "Start PM Visit" checklist
+screen: device-camera-only capture, Retake/Confirm review, per-photo
+live GPS, local SQLite storage for offline use). No geofence check is
+performed anywhere — POP coordinates still don't exist (see above).
+
+No GPS watermark, Google Drive upload, offline *sync* (local storage
+exists; syncing it to a server does not), geofencing, dashboard, MIS,
+or final visit submission has been implemented yet. See
+`mobile_app/README.md` and `backend/README.md` for details and how to
+run each part.

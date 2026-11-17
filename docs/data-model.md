@@ -98,7 +98,7 @@ a later step. `role` and `password_hash` from the original plan were not
 needed for the dev login mode and were dropped; revisit if/when OTP or
 role-based access is added.
 
-## 6. PMVisit — planned (not implemented)
+## 6. PMVisit — backend: planned; on-device: implemented (see #8)
 
 Represents one fortnightly PM visit to a single POP.
 
@@ -116,7 +116,7 @@ Represents one fortnightly PM visit to a single POP.
 | sync_status | enum | `pending_sync`, `synced`, `sync_failed` |
 | fortnight_period | string / date range | which fortnight this visit satisfies, for compliance tracking |
 
-## 7. PMPhoto — planned (not implemented)
+## 7. PMPhoto — backend: planned; on-device: implemented (see #8)
 
 Exactly 5 rows per completed `PMVisit`, one per mandatory category.
 
@@ -139,6 +139,47 @@ Watermark (GPS + date/time burned into the image) is applied on-device at
 capture time, before the file is queued for upload — the stored photo file
 itself carries the visible watermark; `gps_lat`/`gps_lng`/`captured_at`
 are also stored as structured metadata for querying and compliance checks.
+
+## 8. PM Visit & PM Photo — Local (On-Device) Implementation
+
+The PM Photo Capture module stores visits and photos **only on the
+device** (SQLite, via `sqflite`) — there is no backend PMVisit/PMPhoto
+table yet, no submission endpoint, and no cloud sync. This is
+intentional: the mobile app must work fully offline, and the fields
+below are deliberately a close match to the backend `PMVisit`/`PMPhoto`
+plan above, so that wiring up sync later is a mapping exercise, not a
+redesign.
+
+Implementation: `mobile_app/lib/features/pm_visit/data/local_database.dart`.
+
+**`pm_visits`** (one row per visit started on this device):
+
+| Column | Type | Notes |
+|---|---|---|
+| id | TEXT, PK | generated on-device (not a backend ID — no backend row exists) |
+| pop_id | INTEGER | the backend `POP.id` this visit is for |
+| pop_code | TEXT | denormalized for display without a join |
+| started_at | TEXT (ISO 8601) | device-local timestamp |
+
+**`pm_photos`** (one row per *confirmed* mandatory photo; retake
+replaces the row for the same `(visit_id, category)`):
+
+| Column | Type | Notes |
+|---|---|---|
+| visit_id, category | TEXT, TEXT — composite PK | `category` is one of `pop_rack`, `ups_battery`, `busbar`, `earth_pit_chamber`, `earth_pit_open_with_rod` |
+| pop_id | INTEGER | |
+| local_file_path | TEXT | device filesystem path; this is the only copy of the photo right now |
+| captured_at | TEXT (ISO 8601) | the moment the camera took the photo |
+| gps_latitude, gps_longitude, gps_accuracy_m | REAL | a **fresh GPS fix taken for this specific photo**, not reused from visit start or any other photo. Not compared against any POP coordinate — no geofence check is performed anywhere in this module (see "POP Geo-Coordinates — Deferred" above) |
+| upload_status | TEXT | `pending` / `uploaded` / `failed` — prepares for sync, but nothing sets it to anything but `pending` yet |
+| watermarked_file_path | TEXT, nullable | reserved for the GPS-watermark step; always `NULL` today |
+| drive_file_id, drive_file_link | TEXT, nullable | reserved for Google Drive upload; always `NULL` today |
+
+What this deliberately does **not** do yet: burn the watermark into the
+image, upload anywhere, run a geofence check, or submit the visit. Those
+are later modules; this schema is shaped so adding them means filling in
+existing nullable columns / adding sync logic, not changing what is
+captured today.
 
 ## Compliance / Reporting (derived, not stored directly)
 
@@ -169,3 +210,7 @@ export planned for a later phase:
 5. **When official POP latitude/longitude data arrives**: how it's
    imported/validated, and the exact geofence radius policy (fixed
    default vs per-POP).
+6. How a device-generated `pm_visits.id` (see #8) reconciles with a
+   future backend `PMVisit.id` once sync/submission is implemented
+   (e.g. client-generated UUID accepted as-is vs. server-assigned ID
+   returned on first sync).

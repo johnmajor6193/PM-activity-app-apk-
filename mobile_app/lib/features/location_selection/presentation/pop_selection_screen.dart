@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../pm_visit/presentation/pm_visit_screen.dart';
 import '../domain/entities/block.dart';
 import '../domain/entities/district.dart';
 import '../domain/entities/gp.dart';
@@ -163,6 +164,17 @@ class _PopSelectionScreenState extends State<PopSelectionScreen> {
             _DetailRow(label: 'Block', value: detail.blockName),
             _DetailRow(label: 'GP', value: detail.gpName),
             _DetailRow(label: 'Status', value: detail.isActive ? 'Active' : 'Inactive'),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => PmVisitScreen(popId: detail.id, popCode: detail.popCode),
+                  ),
+                );
+              },
+              child: const Text('Start PM Visit'),
+            ),
           ],
         ),
       ),
