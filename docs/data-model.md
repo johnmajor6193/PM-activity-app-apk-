@@ -132,7 +132,7 @@ Exactly 5 rows per completed `PMVisit`, one per mandatory category.
 | local_file_path | string | on-device path before sync (offline queue) |
 | drive_file_id | string, nullable | Google Drive file ID once uploaded |
 | drive_file_link | string, nullable | shareable Drive link |
-| drive_folder_path | string | e.g. `TANFINET_POP_PM_VISIT/<District>/<Block>` |
+| drive_folder_path | string | e.g. `TANFINET PM Monitoring/<District>/<Block>/<GP>/<POP code>/PM Visits/<date>/<visit id>` — see "Google Drive Upload" below |
 | upload_status | enum | `pending`, `uploaded`, `failed` |
 
 Watermark (GPS + date/time burned into the image) is applied on-device at
@@ -234,22 +234,9 @@ starting a duplicate.
 | `synced` | Sync completed successfully. **Not reachable yet** — see below. |
 | `syncFailed` | The most recent sync attempt failed. The visit and its photos are **never** deleted for this; it stays eligible for retry. |
 
-**Google Drive upload is not implemented in this module** — only the
-interface it will use:
-
-- `DriveUploadService` (`domain/services/drive_upload_service.dart`):
-  `Future<void> uploadVisit(PmVisit visit, List<PmPhotoRecord> photos)`.
-- `NotImplementedDriveUploadService` (`data/`) is the only
-  implementation that exists today, and it always throws. This is
-  deliberate: it lets the sync queue/retry state machine be built and
-  tested now, while guaranteeing nothing ever claims a photo was
-  uploaded when it wasn't. `synced` is therefore not reachable in
-  practice until a real Drive-backed implementation replaces it — no
-  other code needs to change when that happens.
-
-**`SyncManager`** (`data/sync_manager.dart`) is the queue:
-`getVisitsEligibleForSync()` returns visits in `pendingSync` or
-`syncFailed`; `syncVisit(visit)` is retry-safe —
+**`SyncManager`** (`mobile_app/lib/features/pm_visit/data/sync_manager.dart`)
+is the queue: `getVisitsEligibleForSync()` returns visits in
+`pendingSync` or `syncFailed`; `syncVisit(visit)` is retry-safe —
 `pendingSync`/`syncFailed` → `syncing` → `synced` (success) or back to
 `syncFailed` (failure) — and only ever touches the `status` column,
 never photos or other visit fields. If there's no connection
@@ -257,11 +244,114 @@ never photos or other visit fields. If there's no connection
 at all and the status is left exactly as it was. `trySyncPendingVisits()`
 attempts every eligible visit; one failing does not stop the others.
 
+`DriveUploadService` (`domain/services/drive_upload_service.dart`,
+`Future<void> uploadVisit(PmVisit visit, List<PmPhotoRecord> photos)`)
+is what `SyncManager` calls to actually move photos somewhere. Two
+implementations exist:
+
+- `GoogleDriveUploadService` (`data/`) — **the default**. See "Google
+  Drive Upload" below: it does not talk to Google Drive itself, it
+  calls the backend.
+- `NotImplementedDriveUploadService` (`data/`) — still present,
+  importable, and passable explicitly (e.g. for developing against the
+  app with no backend reachable at all); always throws.
+
 Per-photo `upload_status` (`pending`/`uploaded`/`failed`, from the PM
-Photo Capture module) is intentionally left alone by this foundation —
-it stays `pending` for every photo until a real Drive upload sets it,
-since syncing today only ever exercises the visit-level state machine
-against a placeholder that cannot succeed.
+Photo Capture module) is intentionally left alone by this module — it
+stays `pending` for every photo; only the backend's response (via
+`GoogleDriveUploadService`) and `SyncManager`'s visit-level `status`
+reflect whether the upload actually happened.
+
+## Google Drive Upload
+
+**Architecture: the backend is the only thing that talks to Google
+Drive.** The Flutter app never holds a Google service-account key or
+any other Google credential. It sends the 5 **watermarked** photos
+(`PmPhotoRecord.watermarkedFilePath` — never the plain originals,
+which stay device-local per "GPS Watermark" above) plus visit/photo
+metadata to the backend over HTTPS; the backend authenticates to
+Google Drive and performs the actual upload.
+
+```
+Flutter (GoogleDriveUploadService)
+   │  POST /api/v1/visits/{visit_id}/sync
+   │  multipart/form-data: visit_metadata (JSON), photos_metadata (JSON), files[] (5 watermarked JPEGs)
+   ▼
+Backend (app/api/v1/endpoints/visits.py)
+   │  validates visit_id/counts, builds the deterministic filename per photo
+   ▼
+GoogleDriveUploadService (backend interface, app/services/drive/base.py)
+   │  GoogleDriveServiceAccountUploadService (real) │ NotConfiguredDriveUploadService │ FakeDriveUploadService (tests)
+   ▼
+Google Drive API (only the real implementation reaches here)
+```
+
+**Folder structure** (created/found as needed under
+`GOOGLE_DRIVE_ROOT_FOLDER_NAME`, default `TANFINET PM Monitoring`):
+
+```
+TANFINET PM Monitoring/
+└── <District>/
+    └── <Block>/
+        └── <GP>/
+            └── <POP code>/
+                └── PM Visits/
+                    └── <YYYY-MM-DD>/
+                        └── <Visit ID>/
+                            └── (the 5 watermarked photos)
+```
+
+Each visit gets its own folder (`<Visit ID>`), under a date folder
+(`visit_date`, derived from when the visit started), under the POP's
+full District/Block/GP/POP-code path. Built by
+`app/services/drive/naming.py:build_drive_folder_segments` (backend) —
+a pure function, unit-tested directly.
+
+**File naming** — deterministic and human-readable:
+`<POP code>_<CATEGORY>_<YYYY-MM-DD>_<HHMMSS>.jpg`, e.g.
+`POP-00125_POP-RACK_2026-11-17_172542.jpg`
+(`app/services/drive/naming.py:build_drive_filename`, also
+unit-tested). The POP code is sanitized to filesystem/Drive-safe
+characters (`[^A-Za-z0-9_-]` → `-`).
+
+**Idempotent, retry-safe uploads.** Before creating a folder or a file,
+the backend looks for an existing one with the same name under the
+same parent (a Drive `files.list` query). A retried sync for the same
+visit — the normal case after a network failure — finds what already
+made it to Drive and reuses it (reported back to the app as
+`duplicate: true`) instead of creating a second copy. Nothing is ever
+deleted, so a half-finished prior attempt is always safe to build on
+top of.
+
+**Per-photo metadata**, attached to each uploaded file via Drive's
+`appProperties` (not just implied by the folder path): Visit ID,
+Employee ID, POP ID, District, Block, GP, category, capture timestamp,
+latitude, longitude, GPS accuracy.
+
+**Expected state flow** (`VisitSyncStatus`, unchanged from "Offline
+Storage & Synchronization" above — this module implements what makes
+`synced` reachable, it doesn't change the state machine itself):
+
+```
+PENDING_SYNC → SYNCING → SYNCED           (upload succeeds)
+PENDING_SYNC → SYNCING → SYNC_FAILED      (upload fails; retry later, nothing local is touched)
+```
+
+**Required configuration (from the company, not yet provided in this
+environment):** a Google Cloud **service-account** JSON key with
+access to Google Drive (typically via a Shared Drive, since service
+accounts have no personal storage quota), set as
+`GOOGLE_SERVICE_ACCOUNT_FILE` on the backend server — never committed
+to this repository. See `backend/README.md` ("Google Drive
+Configuration") for the exact steps. Until it's set, every sync
+attempt gets a clean `SYNC_FAILED` with a "Google Drive is not
+configured" message — never a fake success.
+
+**Real Google Drive upload has not been tested in this environment** —
+no service-account credentials or reachable Google Drive were
+available. What has been verified is the full pipeline against
+`FakeDriveUploadService` (backend) and a mocked HTTP transport
+(Flutter) — see the top-level report for the exact test list.
 
 ## Compliance / Reporting (derived, not stored directly)
 
@@ -285,8 +375,13 @@ export planned for a later phase:
 2. Whether `district_id`/`block_id` are denormalized onto `POP` —
    **resolved: no**, resolved via joins (see POP section above). Still
    open for `PMVisit`.
-3. Exact enum values for `sync_status`, `upload_status` (`role` was
-   dropped — see Employee section above).
+3. Exact enum values for `sync_status` — **resolved**: `VisitSyncStatus`
+   (`localOnly`/`pendingSync`/`syncing`/`synced`/`syncFailed`), see
+   "Offline Storage & Synchronization". Per-photo `upload_status`
+   remains open — it's still always `pending` today; nothing sets it
+   to `uploaded`/`failed` per-photo yet, only the visit-level status
+   reflects a sync attempt's outcome. (`role` was dropped — see
+   Employee section above.)
 4. Definition of a "fortnight period" (calendar-based 1–15/16–end, or
    rolling 14-day windows from first visit).
 5. **When official POP latitude/longitude data arrives**: how it's

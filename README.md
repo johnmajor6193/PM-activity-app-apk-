@@ -36,13 +36,19 @@ backend are functional.
 | Photo storage | Google Drive API (no Firebase) |
 | Visit/metadata storage | PostgreSQL (GPS, timestamps, photo metadata, Drive links) |
 
-Google Drive folder convention for the 5 PM photographs:
+Google Drive folder convention for the 5 PM photographs (see
+`backend/README.md`, "Google Drive Upload", for full detail):
 
 ```
-TANFINET_POP_PM_VISIT
-└── <District>
-    └── <Block>
-        └── <PM visit photographs>
+TANFINET PM Monitoring/
+└── <District>/
+    └── <Block>/
+        └── <GP>/
+            └── <POP code>/
+                └── PM Visits/
+                    └── <YYYY-MM-DD>/
+                        └── <Visit ID>/
+                            └── <PM visit photographs>
 ```
 
 ## Repository Structure
@@ -96,26 +102,36 @@ upload status) live in on-device SQLite from the moment they're
 captured — fully offline, surviving app restarts, and resumable if the
 app is closed mid-visit. Once all 5 photos are confirmed, the visit
 becomes **Pending Sync** automatically; "Sync Now" detects connectivity
-and attempts a real sync queue/retry pipeline (`SyncManager`), but
-**Google Drive upload itself is intentionally not implemented** — only
-its interface (`DriveUploadService`) exists, with a placeholder that
-always fails on purpose so "Sync Failed" is reported honestly, and a
-failed or skipped attempt never deletes or touches any local photo or
-visit data. See `docs/data-model.md` ("Offline Storage &
-Synchronization").
+and attempts a real sync pipeline (`SyncManager`).
 
-No geofencing, dashboard, MIS, final visit submission, or an actual
-Google Drive upload has been implemented yet. See `mobile_app/README.md`
-and `backend/README.md` for details and how to run each part.
+**Google Drive Upload is implemented.** The Flutter app never holds
+Google credentials: it sends the 5 **watermarked** photos (never the
+plain originals, which stay device-local) plus visit/photo metadata to
+the backend's `POST /api/v1/visits/{id}/sync`, and only the backend
+authenticates to Google Drive and performs the upload, under the
+District/Block/GP/POP/PM Visits/`<date>`/`<visit id>` folder structure
+above, with deterministic file names
+(`<POP code>_<CATEGORY>_<date>_<time>.jpg`) and idempotent retries (an
+existing folder/file is reused, never duplicated). A failed upload
+marks the visit `SYNC_FAILED` without touching any local data — see
+`docs/data-model.md` ("Google Drive Upload") and `backend/README.md`
+("Google Drive Upload" / "Google Drive Configuration") for the API,
+folder/metadata detail, and the service-account setup the company
+still needs to provide. **No real Google Drive account has been used
+to test this** — see the top-level report for exactly what was and
+wasn't verified.
+
+No geofencing, dashboard, MIS, or final visit submission has been
+implemented yet. See `mobile_app/README.md` and `backend/README.md`
+for details and how to run each part.
 
 **The Flutter Android project exists.** `mobile_app/android/` was
 generated for real with `flutter create .` (Flutter 3.50.0 / Dart
 3.14.0), not hand-written, and the required Android permissions
 (`CAMERA`, `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`,
 `ACCESS_NETWORK_STATE`) are set in its manifest. `flutter pub get`,
-`flutter analyze` (0 errors/warnings), and `flutter test` (45/45
-passing) have all been run and verified — see `mobile_app/README.md`
-for exact commands, which tests are genuinely real (the watermark's
-and the SQLite repository's) versus fake-backed (camera/GPS/
-connectivity), and one environment-specific test-runner quirk observed
-in this container.
+`flutter analyze` (0 errors/warnings), and `flutter test` (50/50
+passing) have all been run and verified, alongside the backend's own
+`pytest` suite (31/31 passing) — see `mobile_app/README.md` and
+`backend/README.md` for exact commands and which tests are genuinely
+real versus fake-backed.

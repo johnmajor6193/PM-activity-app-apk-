@@ -3,7 +3,7 @@ import '../domain/entities/visit_sync_status.dart';
 import '../domain/repositories/pm_visit_repository.dart';
 import '../domain/services/drive_upload_service.dart';
 import 'connectivity_service.dart';
-import 'not_implemented_drive_upload_service.dart';
+import 'google_drive_upload_service.dart';
 
 /// How one sync attempt for a single visit ended.
 enum SyncOutcome {
@@ -37,15 +37,18 @@ class SyncAttemptResult {
 /// service exists) always has the same visits/photos to work with.
 ///
 /// Depends only on [PmVisitRepository] and [DriveUploadService], so
-/// replacing the placeholder [NotImplementedDriveUploadService] with a
-/// real Google Drive-backed implementation later needs no change here.
+/// swapping [GoogleDriveUploadService] (the default — calls the
+/// backend's `/visits/{id}/sync` endpoint; see that class for why this
+/// app never talks to Google Drive directly) for
+/// `NotImplementedDriveUploadService` (e.g. when developing without a
+/// reachable backend) needs no change here — just pass it explicitly.
 class SyncManager {
   SyncManager({
     required PmVisitRepository repository,
     DriveUploadService? driveUploadService,
     ConnectivityService? connectivityService,
   }) : _repository = repository,
-       _driveUploadService = driveUploadService ?? NotImplementedDriveUploadService(),
+       _driveUploadService = driveUploadService ?? GoogleDriveUploadService(),
        _connectivityService = connectivityService ?? ConnectivityService();
 
   final PmVisitRepository _repository;

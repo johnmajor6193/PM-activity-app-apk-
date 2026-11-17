@@ -33,6 +33,11 @@ backend/*.egg-info/
 *.env.local
 **/service-account*.json
 **/google-drive-credentials*.json
+# Conventional local drop location for the Google Drive service-account
+# key file (see backend/.env.example, GOOGLE_SERVICE_ACCOUNT_FILE) -
+# the whole directory is ignored, not just specific filenames, so any
+# key file placed here is protected regardless of what it's named.
+backend/credentials/
 
 # ---- IDE / OS ----
 .idea/

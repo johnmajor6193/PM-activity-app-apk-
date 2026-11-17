@@ -25,11 +25,11 @@ lib/
 │   │   ├── data/              # LocationApiClient, LocationRepositoryImpl
 │   │   ├── domain/            # LocationRepository interface, District/Block/Gp/PopSummary/PopDetail
 │   │   └── presentation/      # PopSelectionController, PopSelectionScreen
-│   ├── pm_visit/             # 5 mandatory photos, per-photo GPS, GPS watermark, offline storage + sync queue (implemented; no geofence/real Drive upload yet)
-│   │   ├── data/              # Camera/Location/Watermark/Connectivity services, SyncManager, NotImplementedDriveUploadService, local_database.dart (sqflite), SqflitePmVisitRepository
+│   ├── pm_visit/             # 5 mandatory photos, per-photo GPS, GPS watermark, offline storage + sync + Google Drive upload (implemented; no geofence yet)
+│   │   ├── data/              # Camera/Location/Watermark/Connectivity services, SyncManager, GoogleDriveUploadService (calls the backend), NotImplementedDriveUploadService, local_database.dart (sqflite), SqflitePmVisitRepository
 │   │   ├── domain/            # PmVisitRepository + DriveUploadService interfaces, PmVisit/PmPhotoRecord/GpsReading/PhotoCategory/VisitSyncStatus
 │   │   └── presentation/      # PmVisitController, PmVisitScreen
-│   ├── sync/                 # Real Google Drive upload (later step — the queue/state model + its interface already exist, see pm_visit)
+│   ├── sync/                 # reserved (e.g. background/scheduled sync) - the sync queue, state model, and Drive upload all ended up living in pm_visit/ instead, see above
 │   └── dashboard/            # POP visit history (device-local views)
 └── shared/
     ├── widgets/               # reusable UI components
@@ -129,25 +129,35 @@ call — the visit's status becomes **Pending Sync** automatically
 (`VisitSyncStatus`: `localOnly` → `pendingSync` → `syncing` →
 `synced`/`syncFailed`; see `docs/data-model.md`). A status banner on
 `PmVisitScreen` always shows the current one. Once complete, the
-button changes to **"Sync Now"**, which:
+button changes to **"Sync Now"**, which checks connectivity first
+(`ConnectivityService`, via `connectivity_plus` — no connection means
+nothing is attempted, the visit stays Pending Sync, and the engineer
+is told so), then attempts a real sync through `SyncManager`.
 
-- Checks connectivity first (`ConnectivityService`, via
-  `connectivity_plus`). No connection → nothing is attempted, the
-  visit stays Pending Sync, and the engineer is told so.
-- Otherwise attempts a real sync through `SyncManager` against
-  `DriveUploadService` — **but Google Drive upload itself is not
-  implemented in this module**, only the interface. The only
-  implementation that exists, `NotImplementedDriveUploadService`,
-  always fails on purpose, so tapping "Sync Now" today always ends in
-  **Sync Failed** with an honest message — never a fake "success".
-- A failed (or skipped) attempt **never deletes or modifies any local
-  photo or visit data** — only the `status` column changes — so the
-  visit remains fully intact and "Sync Now" can be tapped again later
-  to retry, exactly the same way, once a real Drive-backed
-  `DriveUploadService` replaces the placeholder.
+**Google Drive Upload is implemented — via the backend, never
+directly from this app.** `GoogleDriveUploadService` (the default
+`DriveUploadService`) sends the 5 **watermarked** photos (never the
+plain originals, which stay on the device per the offline-storage
+design above) plus visit/photo metadata to the backend's
+`POST /api/v1/visits/{visitId}/sync`. **This app holds no Google
+credentials of any kind** — see `backend/README.md` ("Google Drive
+Upload") for the folder structure
+(`TANFINET PM Monitoring/<District>/<Block>/<GP>/<POP code>/PM
+Visits/<date>/<visit id>/`), file naming, and idempotent-retry
+behavior, all implemented server-side. If the backend reports failure
+(including "Google Drive is not configured on this server" — the
+default until the company provides service-account credentials — see
+`docs/data-model.md`), `SyncManager` marks the visit `SYNC_FAILED` with
+that message. `NotImplementedDriveUploadService` is still available,
+importable, and passable explicitly (e.g. to develop against this app
+with no backend reachable at all) — it just isn't the default anymore.
 
-No geofencing, dashboard, MIS, or an actual Google Drive upload exists
-yet.
+A failed (or skipped, for no connection) sync attempt **never deletes
+or modifies any local photo or visit data** — only the `status` column
+changes — so the visit remains fully intact and "Sync Now" can be
+tapped again later to retry, exactly the same way.
+
+No geofencing, dashboard, or MIS exists yet.
 
 ## Android Project
 
@@ -220,7 +230,8 @@ flutter test --concurrency=1 \
   test/features/pm_visit/pm_visit_controller_test.dart \
   test/features/pm_visit/watermark_service_test.dart \
   test/features/pm_visit/sqflite_pm_visit_repository_test.dart \
-  test/features/pm_visit/sync_manager_test.dart
+  test/features/pm_visit/sync_manager_test.dart \
+  test/features/pm_visit/google_drive_upload_service_test.dart
 ```
 
 Two test files in this project need no fakes at all, because what they
@@ -245,6 +256,16 @@ connection") against fakes for the repository/connectivity/Drive
 pieces — `SyncManager` itself has no platform dependency, so there's
 nothing "real" underneath to swap in here.
 
+`google_drive_upload_service_test.dart` tests the real HTTP
+request-building logic (which files get attached, that only the
+watermarked content is sent and never the original's, the exact
+metadata fields) against a fake transport
+(`package:http`'s `MockClient`) — there is no real backend or Google
+Drive involved; see `backend/tests/test_drive_sync.py` for the
+backend-side endpoint tests (folder path generation, file naming,
+upload success/failure/retry/idempotency), which also use a fake
+(`FakeDriveUploadService`), never real Google credentials.
+
 Every other test file fakes the camera/GPS boundaries specifically,
 because `image_picker` and `geolocator` do need a real device/emulator.
 
@@ -267,3 +288,12 @@ hand-written fakes, not the real plugins — those three specifically
 need a real device/emulator to verify. An actual APK build/run needs
 the Android SDK, which was not installed (out of scope for this step —
 see the top-level report).
+
+**No real Google Drive upload has been tested anywhere** — not from
+this app, and not from the backend. `GoogleDriveUploadService` here is
+tested only against a mocked HTTP transport, and the backend's own
+Drive integration is tested only against `FakeDriveUploadService`
+(both described above). A real end-to-end test needs a running backend
+with `GOOGLE_SERVICE_ACCOUNT_FILE` configured — see `backend/README.md`
+("Google Drive Configuration") for exactly what the company needs to
+provide.
