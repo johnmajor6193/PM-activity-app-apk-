@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_app/features/pm_visit/data/camera_capture_service.dart';
 import 'package:mobile_app/features/pm_visit/data/location_service.dart';
+import 'package:mobile_app/features/pm_visit/data/watermark_service.dart';
 import 'package:mobile_app/features/pm_visit/domain/entities/gps_reading.dart';
 import 'package:mobile_app/features/pm_visit/domain/entities/pm_photo_record.dart';
 import 'package:mobile_app/features/pm_visit/domain/entities/pm_visit.dart';
@@ -76,20 +77,55 @@ class _FakeLocationService extends LocationService {
   }
 }
 
+/// Records what it was asked to watermark and returns a fake path,
+/// without touching a real image file (the real implementation's own
+/// image-manipulation behavior has its own tests — see
+/// watermark_service_test.dart).
+class _FakeWatermarkService extends WatermarkService {
+  bool throwOnApply = false;
+  final List<({String originalFilePath, String popCode, PhotoCategory category, GpsReading gps})>
+  calls = [];
+
+  @override
+  Future<String> applyWatermark({
+    required String originalFilePath,
+    required String popCode,
+    required PhotoCategory category,
+    required DateTime capturedAt,
+    required GpsReading gps,
+  }) async {
+    if (throwOnApply) {
+      throw const PmVisitFailure(
+        'Could not read the captured photo to add the GPS watermark.',
+      );
+    }
+    calls.add((
+      originalFilePath: originalFilePath,
+      popCode: popCode,
+      category: category,
+      gps: gps,
+    ));
+    return '${originalFilePath}_watermarked.jpg';
+  }
+}
+
 void main() {
   late _FakeRepository repository;
   late _FakeCameraService camera;
   late _FakeLocationService location;
+  late _FakeWatermarkService watermark;
   late PmVisitController controller;
 
   setUp(() {
     repository = _FakeRepository();
     camera = _FakeCameraService();
     location = _FakeLocationService();
+    watermark = _FakeWatermarkService();
     controller = PmVisitController(
       repository: repository,
       cameraService: camera,
       locationService: location,
+      watermarkService: watermark,
     );
   });
 
@@ -108,6 +144,7 @@ void main() {
 
     expect(controller.pendingReview, isNotNull);
     expect(controller.pendingReview!.category, PhotoCategory.popRack);
+    expect(controller.pendingReview!.watermarkedFilePath, isNotEmpty);
     expect(controller.isCompleted(PhotoCategory.popRack), isFalse);
 
     await controller.confirm();
@@ -115,18 +152,54 @@ void main() {
     expect(controller.pendingReview, isNull);
     expect(controller.isCompleted(PhotoCategory.popRack), isTrue);
     expect(repository.saveCallCount, 1);
+    expect(controller.photosByCategory[PhotoCategory.popRack]?.watermarkedFilePath, isNotNull);
   });
 
-  test('retake discards the pending photo without saving it', () async {
+  test(
+    'the GPS and POP ID passed to the watermark match what is stored on the confirmed record',
+    () async {
+      await controller.startVisit(popId: 42, popCode: 'POP-CHN-001');
+
+      await controller.capturePhoto(PhotoCategory.popRack);
+      await controller.confirm();
+
+      final savedRecord = controller.photosByCategory[PhotoCategory.popRack]!;
+      final watermarkCall = watermark.calls.single;
+
+      expect(watermarkCall.gps, same(savedRecord.gps));
+      expect(watermarkCall.popCode, 'POP-CHN-001');
+      expect(watermarkCall.category, PhotoCategory.popRack);
+    },
+  );
+
+  test('retake discards the pending photo and deletes both its files without saving', () async {
     await controller.startVisit(popId: 42, popCode: 'POP-CHN-001');
     await controller.capturePhoto(PhotoCategory.busbar);
+    final originalPath = controller.pendingReview!.localFilePath;
+    final watermarkedPath = controller.pendingReview!.watermarkedFilePath;
 
-    controller.retake();
+    await controller.retake();
 
     expect(controller.pendingReview, isNull);
     expect(controller.isCompleted(PhotoCategory.busbar), isFalse);
     expect(repository.saveCallCount, 0);
+    expect(camera.deletedPaths, containsAll(<String>[originalPath, watermarkedPath]));
   });
+
+  test(
+    'a watermark failure after GPS capture surfaces an error and deletes the orphaned original',
+    () async {
+      await controller.startVisit(popId: 42, popCode: 'POP-CHN-001');
+      watermark.throwOnApply = true;
+
+      await controller.capturePhoto(PhotoCategory.earthPitOpenWithRod);
+
+      expect(controller.pendingReview, isNull);
+      expect(controller.isCompleted(PhotoCategory.earthPitOpenWithRod), isFalse);
+      expect(controller.errorMessage, isNotNull);
+      expect(camera.deletedPaths, contains('/fake/photo.jpg'));
+    },
+  );
 
   test('cancelling the camera leaves the category Pending with no error', () async {
     await controller.startVisit(popId: 42, popCode: 'POP-CHN-001');
@@ -149,6 +222,8 @@ void main() {
     expect(controller.isCompleted(PhotoCategory.earthPitChamber), isFalse);
     expect(controller.errorMessage, isNotNull);
     expect(camera.deletedPaths, contains('/fake/photo.jpg'));
+    // GPS failed before the watermark step was ever reached.
+    expect(watermark.calls, isEmpty);
   });
 
   test('allPhotosCompleted is only true once all 5 mandatory categories are confirmed', () async {

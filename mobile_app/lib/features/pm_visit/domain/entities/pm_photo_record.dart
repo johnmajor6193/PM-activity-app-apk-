@@ -10,9 +10,14 @@ enum PhotoUploadStatus { pending, uploaded, failed }
 /// A single captured, engineer-confirmed PM visit photograph, with
 /// everything required to store and later sync it.
 ///
-/// [watermarkedFilePath], [driveFileId], and [driveFileLink] are reserved
-/// for later steps (GPS watermark, Google Drive upload) and are always
-/// null today.
+/// [watermarkedFilePath] is the GPS-watermarked evidence copy of
+/// [localFilePath] (the untouched original) — see WatermarkService. It
+/// is populated for every photo confirmed from this point on; it stays
+/// nullable because older local rows, if any existed before this was
+/// added, have none.
+///
+/// [driveFileId] and [driveFileLink] are reserved for the later Google
+/// Drive upload step and are always null today.
 class PmPhotoRecord {
   const PmPhotoRecord({
     required this.visitId,

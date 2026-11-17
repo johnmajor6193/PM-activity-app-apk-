@@ -25,8 +25,8 @@ lib/
 │   │   ├── data/              # LocationApiClient, LocationRepositoryImpl
 │   │   ├── domain/            # LocationRepository interface, District/Block/Gp/PopSummary/PopDetail
 │   │   └── presentation/      # PopSelectionController, PopSelectionScreen
-│   ├── pm_visit/             # 5 mandatory photos, per-photo GPS (implemented; no watermark/geofence/Drive yet)
-│   │   ├── data/              # CameraCaptureService, LocationService, local_database.dart (sqflite), SqflitePmVisitRepository
+│   ├── pm_visit/             # 5 mandatory photos, per-photo GPS, GPS watermark (implemented; no geofence/Drive yet)
+│   │   ├── data/              # CameraCaptureService, LocationService, WatermarkService, local_database.dart (sqflite), SqflitePmVisitRepository
 │   │   ├── domain/            # PmVisitRepository interface, PmVisit/PmPhotoRecord/GpsReading/PhotoCategory
 │   │   └── presentation/      # PmVisitController, PmVisitScreen
 │   ├── sync/                 # Drive upload / backend submission (later step — local storage already exists, see pm_visit)
@@ -91,27 +91,41 @@ Earth Pit Open with Rod), each starting Pending.
 - A fresh, live GPS fix (`geolocator`) is captured **at the moment of
   that specific photo** — not once per visit, not reused between
   categories.
-- The photo + its GPS reading are shown on a review sheet (preview
-  image, capture time, latitude, longitude, accuracy) with **Retake**
-  (discards, category stays Pending) and **Confirm** (saves, category
-  becomes Completed).
+- That exact GPS fix is immediately burned as a **visible watermark**
+  into a copy of the photo (`WatermarkService`, pure Dart via
+  `package:image` — no platform channel): `TANFINET`, POP ID, the
+  category label, capture date + time, latitude, longitude, and GPS
+  accuracy, in a dark banner anchored to the bottom edge only, the same
+  layout for every category. The original photo is kept too, untouched.
+- The review sheet shows the **watermarked** photo (not the plain
+  original) with the same GPS values as text underneath, so the engineer
+  sees exactly what will be saved, with **Retake** (discards both
+  files, category stays Pending) and **Confirm** (saves both files,
+  category becomes Completed).
 - **No geofence check happens anywhere in this flow.** The captured
-  GPS is stored as-is; it is never compared against a POP coordinate,
-  because POP coordinates don't exist yet (see POP Selection above).
+  GPS is stored and shown as-is; it is never compared against a POP
+  coordinate, because POP coordinates don't exist yet (see POP
+  Selection above).
+- **If GPS can't be obtained** (location services off, permission
+  denied), no photo reaches the review step at all — no watermark is
+  attempted, no fake coordinates are substituted, the category stays
+  Pending, and the failure message is shown directly on the checklist
+  screen. The only way to complete a category is a real GPS fix.
 - "Submit PM Visit" stays disabled until all 5 categories are
   Completed. Tapping it once enabled only shows a placeholder message —
   the actual submission workflow is a later module.
 
 Everything is stored **only on the device** (SQLite via `sqflite`), so
-a visit and its confirmed photos survive app restarts and need no
-network connection — see `lib/features/pm_visit/data/local_database.dart`
-and `docs/data-model.md` ("PM Visit & PM Photo — Local (On-Device)
-Implementation"). There is no cloud sync, Drive upload, or GPS
-watermark yet; the schema has nullable columns reserved for them.
+a visit and its confirmed photos (original + watermarked, each) survive
+app restarts and need no network connection — see
+`lib/features/pm_visit/data/local_database.dart` and
+`docs/data-model.md` ("PM Visit & PM Photo — Local (On-Device)
+Implementation" and "GPS Watermark"). There is no cloud sync or Drive
+upload yet; the schema has nullable columns reserved for them.
 
-No geofencing, GPS watermark, offline *sync* (as opposed to offline
-*storage*, which is implemented), dashboard, MIS, or Google Drive
-upload logic exists yet.
+No geofencing, offline *sync* (as opposed to offline *storage*, which
+is implemented), dashboard, MIS, or Google Drive upload logic exists
+yet.
 
 ## Android Project
 
@@ -159,11 +173,11 @@ flutter run   # requires a connected device/emulator; backend must be running
 run and pass — see the top-level report for exact output. One
 environment-specific quirk to know about: running `flutter test` with
 **no arguments** (or pointed at the whole `test/` directory) in the
-sandboxed container used to set this up only discovered/ran
-`test/app_test.dart` and showed odd duplicated progress lines, even
-though it reported "All tests passed!" Passing all four test file paths
-explicitly with `--concurrency=1` ran all 15 tests cleanly with correct
-names and no duplication — this looked like a concurrent-isolate
+sandboxed container used to set this up only discovered/ran a subset
+of the test files and showed odd duplicated/missing progress lines,
+even though it reported "All tests passed!" Passing every test file
+path explicitly with `--concurrency=1` ran all of them cleanly with
+correct names and no duplication — this looked like a concurrent-isolate
 output-interleaving quirk tied to that specific container, not a defect
 in the test files (each one also passed individually, standalone, with
 default settings). If plain `flutter test` behaves oddly on a real
@@ -174,8 +188,17 @@ flutter test --concurrency=1 \
   test/app_test.dart \
   test/features/auth/auth_controller_test.dart \
   test/features/location_selection/pop_selection_controller_test.dart \
-  test/features/pm_visit/pm_visit_controller_test.dart
+  test/features/pm_visit/pm_visit_controller_test.dart \
+  test/features/pm_visit/watermark_service_test.dart
 ```
+
+`watermark_service_test.dart` is the one test file in this project that
+needed no fakes at all: `package:image` has no platform channel, so
+those tests write a real synthetic image to a real temp file, run the
+real `WatermarkService`, decode the real output, and assert on actual
+pixels (unchanged above the banner, visibly different inside it) and
+exact watermark text. Every other test file fakes the camera/GPS/SQLite
+boundaries, because those plugins do need a real device/emulator.
 
 `flutter analyze` reports 7 **informational** (not warning/error) notices
 that `package:flutter/material.dart` is deprecated in favor of a new
@@ -189,6 +212,9 @@ actual errors or warnings.
 None of the native camera/GPS/SQLite code paths have been exercised on
 a real device or emulator — only `flutter pub get` (dependency
 resolution), `flutter analyze` (static analysis), and `flutter test`
-(pure-Dart logic tests with fakes, no platform channels) were run. An
-actual APK build/run needs the Android SDK, which was not installed
-(out of scope for this step — see the top-level report).
+were run. Of `flutter test`, only the watermark image manipulation is
+genuinely real (see above); everything that touches `image_picker`,
+`geolocator`, or `sqflite` is tested against hand-written fakes, not
+the real plugins. An actual APK build/run needs the Android SDK, which
+was not installed (out of scope for this step — see the top-level
+report).

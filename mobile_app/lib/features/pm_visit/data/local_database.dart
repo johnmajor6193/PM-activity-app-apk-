@@ -7,10 +7,11 @@ import 'package:sqflite/sqflite.dart';
 ///
 /// This is the only persistence in this module — there is no remote
 /// sync yet, so a visit and its photos stay available with no network
-/// connection and across app restarts. `watermarked_file_path`,
-/// `drive_file_id`, and `drive_file_link` are reserved nullable columns
-/// for later steps (GPS watermark, Google Drive upload); they are not
-/// written to yet.
+/// connection and across app restarts. `watermarked_file_path` holds the
+/// GPS-watermarked evidence copy (see WatermarkService) alongside the
+/// untouched original in `local_file_path`. `drive_file_id` and
+/// `drive_file_link` remain reserved, nullable, and unwritten — for the
+/// later Google Drive upload step.
 class PmVisitLocalDatabase {
   PmVisitLocalDatabase._();
 

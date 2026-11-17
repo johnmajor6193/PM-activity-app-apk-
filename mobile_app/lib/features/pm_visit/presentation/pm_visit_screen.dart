@@ -7,10 +7,11 @@ import 'pm_visit_controller.dart';
 
 /// "Start PM Visit" screen for a selected POP: a checklist of the 5
 /// mandatory photo categories. Each is captured with the device camera
-/// only (no gallery), reviewed with Retake/Confirm, and only counts as
-/// Completed once confirmed. Submitting is disabled until all 5 are
-/// Completed; this screen does not implement the actual submission
-/// workflow (a later module).
+/// only (no gallery), GPS-watermarked, and reviewed with Retake/Confirm
+/// — the review preview shows the watermarked evidence photo, not the
+/// plain original — before counting as Completed. Submitting is
+/// disabled until all 5 are Completed; this screen does not implement
+/// the actual submission workflow (a later module).
 class PmVisitScreen extends StatefulWidget {
   const PmVisitScreen({super.key, required this.popId, required this.popCode});
 
@@ -149,10 +150,17 @@ class _PhotoReviewSheet extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(review.category.label, style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 4),
+          Text(
+            'Watermarked evidence photo',
+            style: Theme.of(context).textTheme.labelMedium,
+          ),
           const SizedBox(height: 12),
+          // Shows the GPS-watermarked copy (not the plain original) so
+          // the engineer can see the exact evidence that will be saved.
           ClipRRect(
             borderRadius: BorderRadius.circular(8),
-            child: Image.file(File(review.localFilePath), height: 240, fit: BoxFit.cover),
+            child: Image.file(File(review.watermarkedFilePath), height: 280, fit: BoxFit.cover),
           ),
           const SizedBox(height: 12),
           _InfoRow(label: 'Captured at', value: review.capturedAt.toLocal().toString()),

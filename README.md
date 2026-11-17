@@ -81,17 +81,25 @@ screen: device-camera-only capture, Retake/Confirm review, per-photo
 live GPS, local SQLite storage for offline use). No geofence check is
 performed anywhere — POP coordinates still don't exist (see above).
 
-No GPS watermark, Google Drive upload, offline *sync* (local storage
-exists; syncing it to a server does not), geofencing, dashboard, MIS,
-or final visit submission has been implemented yet. See
-`mobile_app/README.md` and `backend/README.md` for details and how to
-run each part.
+**GPS Watermark is implemented.** Every confirmed photo's exact capture
+GPS fix (never POP coordinates, never fake) is burned as visible text —
+TANFINET, POP ID, category, date, time, latitude, longitude, accuracy —
+into a copy of the photo, in a consistent bottom banner that doesn't
+cover the subject, for all 5 categories alike. The original photo is
+kept alongside, untouched. If GPS can't be obtained, the photo is never
+confirmable — see `docs/data-model.md` ("GPS Watermark").
 
-**The Flutter Android project now actually exists.** `mobile_app/android/`
-was generated for real with `flutter create .` (Flutter 3.50.0 / Dart
+No Google Drive upload, offline *sync* (local storage exists; syncing
+it to a server does not), geofencing, dashboard, MIS, or final visit
+submission has been implemented yet. See `mobile_app/README.md` and
+`backend/README.md` for details and how to run each part.
+
+**The Flutter Android project exists.** `mobile_app/android/` was
+generated for real with `flutter create .` (Flutter 3.50.0 / Dart
 3.14.0), not hand-written, and the required Android permissions
 (`CAMERA`, `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`) are set in
 its manifest. `flutter pub get`, `flutter analyze` (0 errors/warnings),
-and `flutter test` (15/15 passing) have all been run and verified — see
-`mobile_app/README.md` for exact commands and one environment-specific
-test-runner quirk observed in this container.
+and `flutter test` (24/24 passing) have all been run and verified — see
+`mobile_app/README.md` for exact commands, which tests are genuinely
+real (the watermark's) versus fake-backed (camera/GPS/SQLite), and one
+environment-specific test-runner quirk observed in this container.

@@ -168,18 +168,46 @@ replaces the row for the same `(visit_id, category)`):
 |---|---|---|
 | visit_id, category | TEXT, TEXT — composite PK | `category` is one of `pop_rack`, `ups_battery`, `busbar`, `earth_pit_chamber`, `earth_pit_open_with_rod` |
 | pop_id | INTEGER | |
-| local_file_path | TEXT | device filesystem path; this is the only copy of the photo right now |
+| local_file_path | TEXT | the untouched original photo, exactly as the camera captured it |
 | captured_at | TEXT (ISO 8601) | the moment the camera took the photo |
 | gps_latitude, gps_longitude, gps_accuracy_m | REAL | a **fresh GPS fix taken for this specific photo**, not reused from visit start or any other photo. Not compared against any POP coordinate — no geofence check is performed anywhere in this module (see "POP Geo-Coordinates — Deferred" above) |
 | upload_status | TEXT | `pending` / `uploaded` / `failed` — prepares for sync, but nothing sets it to anything but `pending` yet |
-| watermarked_file_path | TEXT, nullable | reserved for the GPS-watermark step; always `NULL` today |
+| watermarked_file_path | TEXT | the GPS-watermarked evidence copy — see "GPS Watermark" below. Populated for every photo confirmed from this point on; stays a nullable column since rows saved before this existed have none |
 | drive_file_id, drive_file_link | TEXT, nullable | reserved for Google Drive upload; always `NULL` today |
 
-What this deliberately does **not** do yet: burn the watermark into the
-image, upload anywhere, run a geofence check, or submit the visit. Those
-are later modules; this schema is shaped so adding them means filling in
-existing nullable columns / adding sync logic, not changing what is
-captured today.
+What this deliberately does **not** do yet: upload anywhere, run a
+geofence check, or submit the visit. Those are later modules; this
+schema is shaped so adding them means filling in existing nullable
+columns / adding sync logic, not changing what is captured today.
+
+### GPS Watermark
+
+Every confirmed photo gets a second file, `watermarked_file_path`,
+produced by `mobile_app/lib/features/pm_visit/data/watermark_service.dart`
+(pure Dart, via `package:image` — no platform channel, no camera/GPS
+hardware involved in this step itself). `local_file_path` (the original)
+is never modified.
+
+- The watermark is generated from the **same `GpsReading` instance**
+  captured for that photo (see `gps_latitude`/`gps_longitude`/
+  `gps_accuracy_m` above) — not POP master coordinates, which don't
+  exist, and not a separate/re-fetched reading. This is enforced
+  structurally in `PmVisitController.capturePhoto`: one GPS fix is
+  read, then passed to both the watermark call and the eventual
+  `PmPhotoRecord`, so the two can't drift apart.
+- Fixed content, in this order, identical for all 5 categories: `TANFINET`,
+  `POP ID: <popCode>`, `<category label>`, `<date>  <time>`,
+  `Lat: <lat>  Lng: <lng>`, `GPS Accuracy: ±<accuracy> m`.
+- Burned into a dark semi-transparent banner anchored to the bottom
+  edge only, sized to fit the text — it does not reach into the
+  upper/central area where the inspected equipment is expected to be.
+- If GPS capture fails (no fix, permission denied, location services
+  off), no watermark is attempted and no photo reaches the review
+  step at all: the category stays Pending, the failure is shown to the
+  engineer, and nothing is confirmable for that category until a real
+  GPS fix succeeds. No fake/placeholder coordinates are ever used.
+- If watermarking itself fails (e.g. an undecodable image), the
+  capture is discarded the same way — the category stays Pending.
 
 ## Compliance / Reporting (derived, not stored directly)
 
