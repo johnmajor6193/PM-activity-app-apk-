@@ -65,6 +65,17 @@ a development/test authentication mode (Employee ID + mobile number, no
 OTP) designed to be swapped for OTP-based auth later without changing
 the screens or endpoint — see `backend/README.md` ("Auth design").
 
-No camera, GPS, geofencing, Google Drive upload, dashboard, or PM visit
-logic has been implemented yet. See `mobile_app/README.md` and
+**POP Selection is implemented** (Flutter cascading District → Block →
+GP → POP screen, FastAPI `/locations/*` endpoints, `District`/`Block`/
+`GramaPanchayat`/`Pop` data models).
+
+**POP has no latitude/longitude/geofence data, by design.** The official
+POP coordinate master data has not been supplied yet, so none of the
+code, seed data, or API responses use real or fake coordinates. POP
+geofence validation is deferred until that data exists — see
+`docs/data-model.md` ("POP Geo-Coordinates — Deferred"). Per-photo GPS
+capture for PM visits is unaffected and still planned for a later module.
+
+No camera, GPS capture, geofencing, Google Drive upload, dashboard, or
+PM visit logic has been implemented yet. See `mobile_app/README.md` and
 `backend/README.md` for details and how to run each part.

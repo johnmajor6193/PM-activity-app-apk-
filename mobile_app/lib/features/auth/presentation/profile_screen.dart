@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../location_selection/presentation/pop_selection_screen.dart';
 import '../domain/entities/employee_profile.dart';
 import 'login_screen.dart';
 
@@ -28,6 +29,15 @@ class ProfileScreen extends StatelessWidget {
               value: profile.assignedDistrict ?? 'Not assigned',
             ),
             const SizedBox(height: 32),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const PopSelectionScreen()),
+                );
+              },
+              child: const Text('Select POP'),
+            ),
+            const SizedBox(height: 16),
             OutlinedButton(
               onPressed: () {
                 Navigator.of(context).pushAndRemoveUntil(

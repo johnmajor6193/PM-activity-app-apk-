@@ -21,7 +21,10 @@ lib/
 │   │   ├── data/              # AuthApiClient, DevLoginAuthRepository
 │   │   ├── domain/            # AuthRepository interface, EmployeeProfile, AuthFailure
 │   │   └── presentation/      # AuthController, LoginScreen, ProfileScreen
-│   ├── location_selection/   # District → Block → GP → POP
+│   ├── location_selection/   # District → Block → GP → POP (implemented)
+│   │   ├── data/              # LocationApiClient, LocationRepositoryImpl
+│   │   ├── domain/            # LocationRepository interface, District/Block/Gp/PopSummary/PopDetail
+│   │   └── presentation/      # PopSelectionController, PopSelectionScreen
 │   ├── pm_visit/             # 5 mandatory photos, GPS, geofence, watermark
 │   ├── sync/                 # offline storage + Drive/backend sync
 │   └── dashboard/            # POP visit history (device-local views)
@@ -60,8 +63,22 @@ emulator's alias for the host machine running the FastAPI backend on
 `localhost:8000`). Override with:
 `flutter run --dart-define=API_BASE_URL=http://<host>:8000`.
 
-No camera, GPS, geofencing, offline sync, or Google Drive upload logic
-exists yet.
+**POP Selection is implemented.** From `ProfileScreen`, "Select POP"
+opens `PopSelectionScreen`: cascading District → Block → GP → POP
+dropdowns, each loaded from the backend as the one above it is chosen,
+ending in a details card (POP ID, name, District, Block, GP, Active/
+Inactive status).
+
+**No map, coordinates, or geofence status is shown.** The official POP
+latitude/longitude master data has not been supplied yet, so this
+screen does not request, display, or fake any GPS/geofence information
+for a POP — see `PopDetail`
+(`lib/features/location_selection/domain/entities/pop_detail.dart`).
+This is separate from per-photo GPS capture, which belongs to the later
+PM visit/photo module and is unaffected.
+
+No camera, GPS capture, geofencing, offline sync, or Google Drive
+upload logic exists yet.
 
 ## Running (next step)
 
