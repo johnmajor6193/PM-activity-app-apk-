@@ -1,0 +1,45 @@
+# ---- Flutter / Dart (mobile_app/) ----
+mobile_app/.dart_tool/
+mobile_app/.flutter-plugins
+mobile_app/.flutter-plugins-dependencies
+mobile_app/.packages
+mobile_app/.pub-cache/
+mobile_app/.pub/
+mobile_app/build/
+mobile_app/android/.gradle
+mobile_app/android/local.properties
+mobile_app/android/key.properties
+mobile_app/android/app/*.jks
+mobile_app/android/app/*.keystore
+mobile_app/ios/Flutter/.last_build_id
+mobile_app/ios/Pods/
+mobile_app/*.iml
+mobile_app/*.g.dart
+mobile_app/*.freezed.dart
+
+# ---- Python / FastAPI (backend/) ----
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.pyc
+backend/.venv/
+backend/venv/
+backend/env/
+backend/.pytest_cache/
+backend/.mypy_cache/
+backend/*.egg-info/
+
+# ---- Secrets / environment ----
+.env
+*.env.local
+**/service-account*.json
+**/google-drive-credentials*.json
+
+# ---- IDE / OS ----
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# ---- Logs ----
+*.log

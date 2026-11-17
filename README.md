@@ -1,0 +1,65 @@
+# TANFINET Geo-Tagged Fortnightly POP PM Monitoring System
+
+A system for field engineers to perform and record fortnightly Preventive
+Maintenance (PM) visits at TANFINET POP sites, with mandatory geo-tagged
+photo evidence, offline capture, and centralized compliance tracking.
+
+## System Overview
+
+The system has two main components:
+
+1. **`mobile_app/`** — Flutter (Android-first) field app used by engineers to:
+   - Log in
+   - Select District → Block → GP → POP
+   - Capture 5 mandatory live photographs per visit (POP Rack, UPS & Battery,
+     Busbar, Earth Pit Chamber, Earth Pit Open with Rod)
+   - Capture GPS location + accuracy for every photo, validated against the
+     POP's geofence
+   - Work fully offline and sync later
+2. **`backend/`** — Python FastAPI service that:
+   - Authenticates engineers
+   - Stores District/Block/GP/POP master data
+   - Stores PM visit records (GPS, timestamps, photo metadata, Google Drive
+     links)
+   - Will later expose dashboards (district-wise, engineer-wise, POP-wise)
+     and Monthly MIS / Excel export
+
+A web admin dashboard will be added in a later phase once the mobile app and
+backend are functional.
+
+## Technology Stack (locked)
+
+| Layer | Technology |
+|---|---|
+| Mobile app | Flutter / Dart, Android-first, clean modular architecture |
+| Backend | Python, FastAPI, PostgreSQL, REST API |
+| Photo storage | Google Drive API (no Firebase) |
+| Visit/metadata storage | PostgreSQL (GPS, timestamps, photo metadata, Drive links) |
+
+Google Drive folder convention for the 5 PM photographs:
+
+```
+TANFINET_POP_PM_VISIT
+└── <District>
+    └── <Block>
+        └── <PM visit photographs>
+```
+
+## Repository Structure
+
+```
+PM-activity-app-apk-/
+├── mobile_app/     # Flutter app (see mobile_app/README.md)
+├── backend/        # FastAPI service (see backend/README.md)
+├── docs/
+│   └── data-model.md
+├── .gitignore
+└── README.md
+```
+
+## Current Status
+
+This is the **project scaffold** only. No camera, GPS, geofencing, Google
+Drive upload, dashboard, or PM business logic has been implemented yet.
+See `mobile_app/README.md` and `backend/README.md` for what exists in each
+part and how to run them.
