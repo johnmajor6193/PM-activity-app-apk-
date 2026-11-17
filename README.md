@@ -89,17 +89,33 @@ cover the subject, for all 5 categories alike. The original photo is
 kept alongside, untouched. If GPS can't be obtained, the photo is never
 confirmable — see `docs/data-model.md` ("GPS Watermark").
 
-No Google Drive upload, offline *sync* (local storage exists; syncing
-it to a server does not), geofencing, dashboard, MIS, or final visit
-submission has been implemented yet. See `mobile_app/README.md` and
-`backend/README.md` for details and how to run each part.
+**Offline Storage & Synchronization (foundation) is implemented.**
+Every visit (Employee ID, District/Block/GP/POP, start time, sync
+status) and all 5 photo records (original + watermarked paths, GPS,
+upload status) live in on-device SQLite from the moment they're
+captured — fully offline, surviving app restarts, and resumable if the
+app is closed mid-visit. Once all 5 photos are confirmed, the visit
+becomes **Pending Sync** automatically; "Sync Now" detects connectivity
+and attempts a real sync queue/retry pipeline (`SyncManager`), but
+**Google Drive upload itself is intentionally not implemented** — only
+its interface (`DriveUploadService`) exists, with a placeholder that
+always fails on purpose so "Sync Failed" is reported honestly, and a
+failed or skipped attempt never deletes or touches any local photo or
+visit data. See `docs/data-model.md` ("Offline Storage &
+Synchronization").
+
+No geofencing, dashboard, MIS, final visit submission, or an actual
+Google Drive upload has been implemented yet. See `mobile_app/README.md`
+and `backend/README.md` for details and how to run each part.
 
 **The Flutter Android project exists.** `mobile_app/android/` was
 generated for real with `flutter create .` (Flutter 3.50.0 / Dart
 3.14.0), not hand-written, and the required Android permissions
-(`CAMERA`, `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`) are set in
-its manifest. `flutter pub get`, `flutter analyze` (0 errors/warnings),
-and `flutter test` (24/24 passing) have all been run and verified — see
-`mobile_app/README.md` for exact commands, which tests are genuinely
-real (the watermark's) versus fake-backed (camera/GPS/SQLite), and one
-environment-specific test-runner quirk observed in this container.
+(`CAMERA`, `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`,
+`ACCESS_NETWORK_STATE`) are set in its manifest. `flutter pub get`,
+`flutter analyze` (0 errors/warnings), and `flutter test` (45/45
+passing) have all been run and verified — see `mobile_app/README.md`
+for exact commands, which tests are genuinely real (the watermark's
+and the SQLite repository's) versus fake-backed (camera/GPS/
+connectivity), and one environment-specific test-runner quirk observed
+in this container.

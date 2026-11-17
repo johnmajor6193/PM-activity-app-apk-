@@ -3,11 +3,13 @@ import 'package:flutter/foundation.dart';
 import '../data/camera_capture_service.dart';
 import '../data/location_service.dart';
 import '../data/sqflite_pm_visit_repository.dart';
+import '../data/sync_manager.dart';
 import '../data/watermark_service.dart';
 import '../domain/entities/gps_reading.dart';
 import '../domain/entities/pm_photo_record.dart';
 import '../domain/entities/pm_visit.dart';
 import '../domain/entities/photo_category.dart';
+import '../domain/entities/visit_sync_status.dart';
 import '../domain/pm_visit_failure.dart';
 import '../domain/repositories/pm_visit_repository.dart';
 
@@ -31,51 +33,101 @@ class PendingPhotoReview {
   final GpsReading gps;
 }
 
-/// Drives the "Start PM Visit" screen: starting a visit for a POP,
-/// capturing a live camera photo + a fresh live GPS fix per category,
-/// burning that GPS fix into a watermark, and the Retake/Confirm review
-/// step.
+/// Drives the "Start PM Visit" screen: starting (or resuming) a visit
+/// for a POP, capturing a live camera photo + a fresh live GPS fix per
+/// category, burning that GPS fix into a watermark, the Retake/Confirm
+/// review step, and — once all 5 categories are confirmed — attempting
+/// synchronization.
 ///
 /// Depends only on [PmVisitRepository] plus the camera/location/
-/// watermark services, so adding Google Drive upload or geofence
-/// validation later does not require changing this controller or the
-/// screen that uses it — only a new repository/service implementation.
+/// watermark/sync services, so adding a real Google Drive upload or
+/// geofence validation later does not require changing this controller
+/// or the screen that uses it — only a new service implementation.
 class PmVisitController extends ChangeNotifier {
-  PmVisitController({
+  factory PmVisitController({
     PmVisitRepository? repository,
     CameraCaptureService? cameraService,
     LocationService? locationService,
     WatermarkService? watermarkService,
-  }) : _repository = repository ?? SqflitePmVisitRepository(),
-       _cameraService = cameraService ?? CameraCaptureService(),
-       _locationService = locationService ?? LocationService(),
-       _watermarkService = watermarkService ?? WatermarkService();
+    SyncManager? syncManager,
+  }) {
+    // Resolved once so the default SyncManager shares the same
+    // repository instance as this controller, rather than each
+    // constructing its own (functionally harmless either way, since
+    // SqflitePmVisitRepository wraps a DB singleton, but wasteful).
+    final resolvedRepository = repository ?? SqflitePmVisitRepository();
+    return PmVisitController._(
+      repository: resolvedRepository,
+      cameraService: cameraService ?? CameraCaptureService(),
+      locationService: locationService ?? LocationService(),
+      watermarkService: watermarkService ?? WatermarkService(),
+      syncManager: syncManager ?? SyncManager(repository: resolvedRepository),
+    );
+  }
+
+  PmVisitController._({
+    required PmVisitRepository repository,
+    required CameraCaptureService cameraService,
+    required LocationService locationService,
+    required WatermarkService watermarkService,
+    required SyncManager syncManager,
+  }) : _repository = repository,
+       _cameraService = cameraService,
+       _locationService = locationService,
+       _watermarkService = watermarkService,
+       _syncManager = syncManager;
 
   final PmVisitRepository _repository;
   final CameraCaptureService _cameraService;
   final LocationService _locationService;
   final WatermarkService _watermarkService;
+  final SyncManager _syncManager;
 
   PmVisit? visit;
   final Map<PhotoCategory, PmPhotoRecord> photosByCategory = {};
   PhotoCategory? categoryInProgress;
   PendingPhotoReview? pendingReview;
   String? errorMessage;
+  bool isSyncing = false;
+  String? syncMessage;
 
   bool get isStarted => visit != null;
 
+  VisitSyncStatus? get visitStatus => visit?.status;
+
   bool isCompleted(PhotoCategory category) => photosByCategory.containsKey(category);
 
-  /// The PM visit cannot be submitted until every mandatory category has
-  /// a confirmed photo.
+  /// The PM visit cannot be synced until every mandatory category has a
+  /// confirmed photo.
   bool get allPhotosCompleted =>
       mandatoryPhotoCategories.every((category) => photosByCategory.containsKey(category));
 
-  Future<void> startVisit({required int popId, required String popCode}) async {
+  /// Starts a new visit for [popId], or resumes the most recent
+  /// not-yet-complete one on this device for the same POP — so closing
+  /// and reopening the app mid-capture continues where the engineer
+  /// left off instead of starting a duplicate visit.
+  Future<void> startVisit({
+    required String employeeId,
+    required int popId,
+    required String popCode,
+    required String districtName,
+    required String blockName,
+    required String gpName,
+  }) async {
     errorMessage = null;
     notifyListeners();
     try {
-      final startedVisit = await _repository.startVisit(popId: popId, popCode: popCode);
+      final resumable = await _repository.getResumableVisit(popId);
+      final startedVisit =
+          resumable ??
+          await _repository.startVisit(
+            employeeId: employeeId,
+            popId: popId,
+            popCode: popCode,
+            districtName: districtName,
+            blockName: blockName,
+            gpName: gpName,
+          );
       final existingPhotos = await _repository.getPhotosForVisit(startedVisit.id);
       visit = startedVisit;
       photosByCategory
@@ -170,7 +222,9 @@ class PmVisitController extends ChangeNotifier {
   }
 
   /// Persists the pending photo (original + watermarked evidence copy)
-  /// and marks its category Completed. On failure, the pending photo is
+  /// and marks its category Completed. Once every mandatory category is
+  /// Completed, the visit transitions from LOCAL_ONLY to PENDING_SYNC —
+  /// offline, with no network call. On failure, the pending photo is
   /// discarded (same as retake) and an error is shown — the engineer
   /// must capture again rather than retry just the save.
   Future<void> confirm() async {
@@ -193,10 +247,38 @@ class PmVisitController extends ChangeNotifier {
     try {
       await _repository.savePhoto(record);
       photosByCategory[review.category] = record;
+
+      if (allPhotosCompleted && currentVisit.status == VisitSyncStatus.localOnly) {
+        await _repository.updateVisitStatus(currentVisit.id, VisitSyncStatus.pendingSync);
+        visit = currentVisit.copyWithStatus(VisitSyncStatus.pendingSync);
+      }
     } catch (_) {
       errorMessage = 'Could not save the photo. Please retake it.';
     }
     pendingReview = null;
+    notifyListeners();
+  }
+
+  /// Attempts to sync the current visit right now. Does nothing if the
+  /// visit is not yet complete. Safe to call again after a failure —
+  /// this is exactly how a retry works, since nothing local is ever
+  /// deleted by a failed or skipped attempt (see SyncManager).
+  Future<void> attemptSyncNow() async {
+    final currentVisit = visit;
+    if (currentVisit == null || !allPhotosCompleted) {
+      return;
+    }
+
+    isSyncing = true;
+    syncMessage = null;
+    notifyListeners();
+
+    final result = await _syncManager.syncVisit(currentVisit);
+
+    final refreshed = await _repository.getVisit(currentVisit.id);
+    visit = refreshed ?? currentVisit;
+    syncMessage = result.message ?? 'Visit synced successfully.';
+    isSyncing = false;
     notifyListeners();
   }
 

@@ -3,20 +3,40 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../domain/entities/photo_category.dart';
+import '../domain/entities/visit_sync_status.dart';
 import 'pm_visit_controller.dart';
 
 /// "Start PM Visit" screen for a selected POP: a checklist of the 5
 /// mandatory photo categories. Each is captured with the device camera
 /// only (no gallery), GPS-watermarked, and reviewed with Retake/Confirm
 /// — the review preview shows the watermarked evidence photo, not the
-/// plain original — before counting as Completed. Submitting is
-/// disabled until all 5 are Completed; this screen does not implement
-/// the actual submission workflow (a later module).
+/// plain original — before counting as Completed.
+///
+/// Reopening this screen for a POP with an incomplete visit resumes
+/// that visit (see PmVisitController.startVisit) rather than starting a
+/// new one, so closing the app mid-capture never loses progress.
+///
+/// Once all 5 categories are Completed, the visit becomes Pending Sync
+/// automatically (fully offline). "Sync Now" then attempts a real sync
+/// attempt through the (currently placeholder) sync pipeline — see
+/// SyncManager — rather than a fake success message.
 class PmVisitScreen extends StatefulWidget {
-  const PmVisitScreen({super.key, required this.popId, required this.popCode});
+  const PmVisitScreen({
+    super.key,
+    required this.employeeId,
+    required this.popId,
+    required this.popCode,
+    required this.districtName,
+    required this.blockName,
+    required this.gpName,
+  });
 
+  final String employeeId;
   final int popId;
   final String popCode;
+  final String districtName;
+  final String blockName;
+  final String gpName;
 
   @override
   State<PmVisitScreen> createState() => _PmVisitScreenState();
@@ -30,7 +50,14 @@ class _PmVisitScreenState extends State<PmVisitScreen> {
     super.initState();
     _controller = PmVisitController();
     _controller.addListener(_onChanged);
-    _controller.startVisit(popId: widget.popId, popCode: widget.popCode);
+    _controller.startVisit(
+      employeeId: widget.employeeId,
+      popId: widget.popId,
+      popCode: widget.popCode,
+      districtName: widget.districtName,
+      blockName: widget.blockName,
+      gpName: widget.gpName,
+    );
   }
 
   @override
@@ -66,6 +93,8 @@ class _PmVisitScreenState extends State<PmVisitScreen> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
+                _buildStatusBanner(),
+                const SizedBox(height: 16),
                 if (_controller.errorMessage != null) ...[
                   Text(
                     _controller.errorMessage!,
@@ -73,11 +102,40 @@ class _PmVisitScreenState extends State<PmVisitScreen> {
                   ),
                   const SizedBox(height: 16),
                 ],
+                if (_controller.syncMessage != null) ...[
+                  Text(_controller.syncMessage!, style: Theme.of(context).textTheme.bodyMedium),
+                  const SizedBox(height: 16),
+                ],
                 ...mandatoryPhotoCategories.map(_buildCategoryTile),
                 const SizedBox(height: 24),
-                _buildSubmitButton(),
+                _buildActionButton(),
               ],
             ),
+    );
+  }
+
+  Widget _buildStatusBanner() {
+    final status = _controller.visitStatus;
+    if (status == null) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: _statusColor(status).withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _statusColor(status)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.circle, size: 10, color: _statusColor(status)),
+          const SizedBox(width: 8),
+          Text(
+            'Visit status: ${_statusLabel(status)}',
+            style: TextStyle(color: _statusColor(status), fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
     );
   }
 
@@ -108,26 +166,49 @@ class _PmVisitScreenState extends State<PmVisitScreen> {
     );
   }
 
-  Widget _buildSubmitButton() {
+  Widget _buildActionButton() {
     final allDone = _controller.allPhotosCompleted;
+    final isSyncing = _controller.isSyncing;
     return FilledButton(
-      onPressed: allDone
-          ? () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    'All 5 photos captured. Submission will be implemented in a later step.',
-                  ),
-                ),
-              );
-            }
-          : null,
-      child: Text(
-        allDone
-            ? 'Submit PM Visit'
-            : 'Submit PM Visit (${_controller.photosByCategory.length}/5 completed)',
-      ),
+      onPressed: !allDone || isSyncing ? null : () => _controller.attemptSyncNow(),
+      child: isSyncing
+          ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
+          : Text(
+              allDone
+                  ? 'Sync Now'
+                  : 'Sync Now (${_controller.photosByCategory.length}/5 completed)',
+            ),
     );
+  }
+
+  Color _statusColor(VisitSyncStatus status) {
+    switch (status) {
+      case VisitSyncStatus.localOnly:
+        return Colors.grey.shade700;
+      case VisitSyncStatus.pendingSync:
+        return Colors.orange.shade800;
+      case VisitSyncStatus.syncing:
+        return Colors.blue.shade700;
+      case VisitSyncStatus.synced:
+        return Colors.green.shade700;
+      case VisitSyncStatus.syncFailed:
+        return Colors.red.shade700;
+    }
+  }
+
+  String _statusLabel(VisitSyncStatus status) {
+    switch (status) {
+      case VisitSyncStatus.localOnly:
+        return 'Local Only';
+      case VisitSyncStatus.pendingSync:
+        return 'Pending Sync';
+      case VisitSyncStatus.syncing:
+        return 'Syncing…';
+      case VisitSyncStatus.synced:
+        return 'Synced';
+      case VisitSyncStatus.syncFailed:
+        return 'Sync Failed — will retry';
+    }
   }
 }
 

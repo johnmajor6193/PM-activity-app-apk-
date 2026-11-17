@@ -17,9 +17,9 @@ dependencies:
   path_provider: ^2.1.5
   path: ^1.9.0
   image: ^4.3.0 # pure-Dart GPS watermark burn-in (no platform channel)
+  connectivity_plus: ^6.1.0 # detects whether sync is possible right now
 
   # Planned for later steps (not added yet, listed here for reference only):
-  # connectivity_plus     - network state for sync triggers
   # workmanager            - background sync
   # googleapis / google_sign_in - Google Drive upload
 
@@ -27,6 +27,7 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.0
+  sqflite_common_ffi: ^2.3.4 # real SQLite (via FFI) for testing the repository without a device
 
 flutter:
   uses-material-design: true

@@ -4,6 +4,7 @@ import '../domain/entities/gps_reading.dart';
 import '../domain/entities/pm_photo_record.dart';
 import '../domain/entities/pm_visit.dart';
 import '../domain/entities/photo_category.dart';
+import '../domain/entities/visit_sync_status.dart';
 import '../domain/repositories/pm_visit_repository.dart';
 import 'local_database.dart';
 
@@ -16,23 +17,86 @@ class SqflitePmVisitRepository implements PmVisitRepository {
   final PmVisitLocalDatabase _database;
 
   @override
-  Future<PmVisit> startVisit({required int popId, required String popCode}) async {
+  Future<PmVisit> startVisit({
+    required String employeeId,
+    required int popId,
+    required String popCode,
+    required String districtName,
+    required String blockName,
+    required String gpName,
+  }) async {
     final db = await _database.database;
     final visit = PmVisit(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
+      employeeId: employeeId,
       popId: popId,
       popCode: popCode,
+      districtName: districtName,
+      blockName: blockName,
+      gpName: gpName,
       startedAt: DateTime.now(),
     );
 
     await db.insert('pm_visits', {
       'id': visit.id,
+      'employee_id': visit.employeeId,
       'pop_id': visit.popId,
       'pop_code': visit.popCode,
+      'district': visit.districtName,
+      'block': visit.blockName,
+      'gp': visit.gpName,
       'started_at': visit.startedAt.toIso8601String(),
+      'status': visit.status.name,
     });
 
     return visit;
+  }
+
+  @override
+  Future<PmVisit?> getResumableVisit(int popId) async {
+    final db = await _database.database;
+    final rows = await db.query(
+      'pm_visits',
+      where: 'pop_id = ? AND status = ?',
+      whereArgs: [popId, VisitSyncStatus.localOnly.name],
+      orderBy: 'started_at DESC',
+      limit: 1,
+    );
+    if (rows.isEmpty) {
+      return null;
+    }
+    return _visitFromRow(rows.first);
+  }
+
+  @override
+  Future<PmVisit?> getVisit(String visitId) async {
+    final db = await _database.database;
+    final rows = await db.query('pm_visits', where: 'id = ?', whereArgs: [visitId], limit: 1);
+    if (rows.isEmpty) {
+      return null;
+    }
+    return _visitFromRow(rows.first);
+  }
+
+  @override
+  Future<List<PmVisit>> getVisitsByStatus(List<VisitSyncStatus> statuses) async {
+    if (statuses.isEmpty) {
+      return [];
+    }
+    final db = await _database.database;
+    final placeholders = List.filled(statuses.length, '?').join(', ');
+    final rows = await db.query(
+      'pm_visits',
+      where: 'status IN ($placeholders)',
+      whereArgs: statuses.map((status) => status.name).toList(),
+    );
+    return rows.map(_visitFromRow).toList();
+  }
+
+  @override
+  Future<void> updateVisitStatus(String visitId, VisitSyncStatus status) async {
+    final db = await _database.database;
+    await db.update('pm_visits', {'status': status.name}, where: 'id = ?', whereArgs: [visitId]);
   }
 
   @override
@@ -84,5 +148,19 @@ class SqflitePmVisitRepository implements PmVisitRepository {
       );
     }
     return result;
+  }
+
+  PmVisit _visitFromRow(Map<String, Object?> row) {
+    return PmVisit(
+      id: row['id'] as String,
+      employeeId: row['employee_id'] as String,
+      popId: row['pop_id'] as int,
+      popCode: row['pop_code'] as String,
+      districtName: row['district'] as String,
+      blockName: row['block'] as String,
+      gpName: row['gp'] as String,
+      startedAt: DateTime.parse(row['started_at'] as String),
+      status: VisitSyncStatus.values.byName(row['status'] as String),
+    );
   }
 }

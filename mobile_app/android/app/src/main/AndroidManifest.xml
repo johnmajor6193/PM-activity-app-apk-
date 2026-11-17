@@ -5,6 +5,13 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Required by the Offline Storage & Sync foundation module:
+         connectivity_plus, to detect whether sync is currently
+         possible. connectivity_plus's own manifest already declares
+         this (Android merges it in either way); declared explicitly
+         here too for the same documentation reasons as the three
+         permissions above. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
         android:label="mobile_app"

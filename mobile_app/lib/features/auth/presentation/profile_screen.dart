@@ -32,7 +32,9 @@ class ProfileScreen extends StatelessWidget {
             FilledButton(
               onPressed: () {
                 Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const PopSelectionScreen()),
+                  MaterialPageRoute(
+                    builder: (_) => PopSelectionScreen(employeeId: profile.employeeId),
+                  ),
                 );
               },
               child: const Text('Select POP'),

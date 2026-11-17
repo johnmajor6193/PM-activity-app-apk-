@@ -25,11 +25,11 @@ lib/
 │   │   ├── data/              # LocationApiClient, LocationRepositoryImpl
 │   │   ├── domain/            # LocationRepository interface, District/Block/Gp/PopSummary/PopDetail
 │   │   └── presentation/      # PopSelectionController, PopSelectionScreen
-│   ├── pm_visit/             # 5 mandatory photos, per-photo GPS, GPS watermark (implemented; no geofence/Drive yet)
-│   │   ├── data/              # CameraCaptureService, LocationService, WatermarkService, local_database.dart (sqflite), SqflitePmVisitRepository
-│   │   ├── domain/            # PmVisitRepository interface, PmVisit/PmPhotoRecord/GpsReading/PhotoCategory
+│   ├── pm_visit/             # 5 mandatory photos, per-photo GPS, GPS watermark, offline storage + sync queue (implemented; no geofence/real Drive upload yet)
+│   │   ├── data/              # Camera/Location/Watermark/Connectivity services, SyncManager, NotImplementedDriveUploadService, local_database.dart (sqflite), SqflitePmVisitRepository
+│   │   ├── domain/            # PmVisitRepository + DriveUploadService interfaces, PmVisit/PmPhotoRecord/GpsReading/PhotoCategory/VisitSyncStatus
 │   │   └── presentation/      # PmVisitController, PmVisitScreen
-│   ├── sync/                 # Drive upload / backend submission (later step — local storage already exists, see pm_visit)
+│   ├── sync/                 # Real Google Drive upload (later step — the queue/state model + its interface already exist, see pm_visit)
 │   └── dashboard/            # POP visit history (device-local views)
 └── shared/
     ├── widgets/               # reusable UI components
@@ -111,20 +111,42 @@ Earth Pit Open with Rod), each starting Pending.
   attempted, no fake coordinates are substituted, the category stays
   Pending, and the failure message is shown directly on the checklist
   screen. The only way to complete a category is a real GPS fix.
-- "Submit PM Visit" stays disabled until all 5 categories are
-  Completed. Tapping it once enabled only shows a placeholder message —
-  the actual submission workflow is a later module.
-
-Everything is stored **only on the device** (SQLite via `sqflite`), so
-a visit and its confirmed photos (original + watermarked, each) survive
-app restarts and need no network connection — see
+Everything above works with **zero network calls**, and a visit's data
+(including which employee, district, block and GP it belongs to) and
+its confirmed photos (original + watermarked, each) are written to
+SQLite as they're captured — see
 `lib/features/pm_visit/data/local_database.dart` and
 `docs/data-model.md` ("PM Visit & PM Photo — Local (On-Device)
-Implementation" and "GPS Watermark"). There is no cloud sync or Drive
-upload yet; the schema has nullable columns reserved for them.
+Implementation" and "GPS Watermark"). **Closing and reopening the app
+mid-visit resumes it** instead of starting a duplicate: opening the
+same POP again finds the incomplete visit (`PmVisitRepository.
+getResumableVisit`) and continues it, with already-confirmed photos
+shown as Completed.
 
-No geofencing, offline *sync* (as opposed to offline *storage*, which
-is implemented), dashboard, MIS, or Google Drive upload logic exists
+**Offline Storage & Synchronization (foundation) is implemented.** The
+moment the 5th photo is confirmed — offline, no button, no network
+call — the visit's status becomes **Pending Sync** automatically
+(`VisitSyncStatus`: `localOnly` → `pendingSync` → `syncing` →
+`synced`/`syncFailed`; see `docs/data-model.md`). A status banner on
+`PmVisitScreen` always shows the current one. Once complete, the
+button changes to **"Sync Now"**, which:
+
+- Checks connectivity first (`ConnectivityService`, via
+  `connectivity_plus`). No connection → nothing is attempted, the
+  visit stays Pending Sync, and the engineer is told so.
+- Otherwise attempts a real sync through `SyncManager` against
+  `DriveUploadService` — **but Google Drive upload itself is not
+  implemented in this module**, only the interface. The only
+  implementation that exists, `NotImplementedDriveUploadService`,
+  always fails on purpose, so tapping "Sync Now" today always ends in
+  **Sync Failed** with an honest message — never a fake "success".
+- A failed (or skipped) attempt **never deletes or modifies any local
+  photo or visit data** — only the `status` column changes — so the
+  visit remains fully intact and "Sync Now" can be tapped again later
+  to retry, exactly the same way, once a real Drive-backed
+  `DriveUploadService` replaces the placeholder.
+
+No geofencing, dashboard, MIS, or an actual Google Drive upload exists
 yet.
 
 ## Android Project
@@ -138,13 +160,20 @@ existing `lib/`, `test/`, or `pubspec.yaml`. Application ID:
 
 **Required Android permissions** — already added to
 `android/app/src/main/AndroidManifest.xml`, for `image_picker`'s camera
-capture and `geolocator`'s GPS reads:
+capture, `geolocator`'s GPS reads, and `connectivity_plus`'s
+connectivity checks:
 
 ```xml
 <uses-permission android:name="android.permission.CAMERA" />
 <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 ```
+
+(`connectivity_plus` declares `ACCESS_NETWORK_STATE` in its own plugin
+manifest too, so Android's manifest merger would add it either way —
+it's declared here explicitly for the same documentation reasons as
+the other three.)
 
 Two files `flutter create` generates are deliberately **not** committed
 (see `android/.gitignore`, which is the current stock Flutter template,
@@ -189,16 +218,35 @@ flutter test --concurrency=1 \
   test/features/auth/auth_controller_test.dart \
   test/features/location_selection/pop_selection_controller_test.dart \
   test/features/pm_visit/pm_visit_controller_test.dart \
-  test/features/pm_visit/watermark_service_test.dart
+  test/features/pm_visit/watermark_service_test.dart \
+  test/features/pm_visit/sqflite_pm_visit_repository_test.dart \
+  test/features/pm_visit/sync_manager_test.dart
 ```
 
-`watermark_service_test.dart` is the one test file in this project that
-needed no fakes at all: `package:image` has no platform channel, so
-those tests write a real synthetic image to a real temp file, run the
-real `WatermarkService`, decode the real output, and assert on actual
-pixels (unchanged above the banner, visibly different inside it) and
-exact watermark text. Every other test file fakes the camera/GPS/SQLite
-boundaries, because those plugins do need a real device/emulator.
+Two test files in this project need no fakes at all, because what they
+test has no platform channel:
+
+- `watermark_service_test.dart` writes a real synthetic image to a
+  real temp file, runs the real `WatermarkService`, decodes the real
+  output, and asserts on actual pixels (unchanged above the banner,
+  visibly different inside it) and exact watermark text.
+- `sqflite_pm_visit_repository_test.dart` runs the real
+  `SqflitePmVisitRepository` against a real SQLite database — via
+  `sqflite_common_ffi`, which loads the system's native `sqlite3`
+  through FFI instead of the `sqflite` plugin's Android/iOS platform
+  channel. `PmVisitLocalDatabase.withPath(...)` (a `@visibleForTesting`
+  factory) points it at a temp file instead of asking `path_provider`
+  for one, since `path_provider` itself needs a platform channel these
+  tests don't have. Real schema, real SQL, real row mapping.
+
+`sync_manager_test.dart` tests `SyncManager`'s own orchestration logic
+(status transitions, retry, "don't touch anything without a
+connection") against fakes for the repository/connectivity/Drive
+pieces — `SyncManager` itself has no platform dependency, so there's
+nothing "real" underneath to swap in here.
+
+Every other test file fakes the camera/GPS boundaries specifically,
+because `image_picker` and `geolocator` do need a real device/emulator.
 
 `flutter analyze` reports 7 **informational** (not warning/error) notices
 that `package:flutter/material.dart` is deprecated in favor of a new
@@ -209,12 +257,13 @@ to it is a significant, still-emerging ecosystem shift that was out of
 scope here; `flutter analyze --no-fatal-infos` exits 0, confirming zero
 actual errors or warnings.
 
-None of the native camera/GPS/SQLite code paths have been exercised on
-a real device or emulator — only `flutter pub get` (dependency
-resolution), `flutter analyze` (static analysis), and `flutter test`
-were run. Of `flutter test`, only the watermark image manipulation is
-genuinely real (see above); everything that touches `image_picker`,
-`geolocator`, or `sqflite` is tested against hand-written fakes, not
-the real plugins. An actual APK build/run needs the Android SDK, which
-was not installed (out of scope for this step — see the top-level
-report).
+None of the native camera/GPS code paths have been exercised on a real
+device or emulator — only `flutter pub get` (dependency resolution),
+`flutter analyze` (static analysis), and `flutter test` were run. Of
+`flutter test`, the watermark image manipulation and the SQLite
+repository are genuinely real (see above); everything that touches
+`image_picker`, `geolocator`, or `connectivity_plus` is tested against
+hand-written fakes, not the real plugins — those three specifically
+need a real device/emulator to verify. An actual APK build/run needs
+the Android SDK, which was not installed (out of scope for this step —
+see the top-level report).

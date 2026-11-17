@@ -157,9 +157,12 @@ Implementation: `mobile_app/lib/features/pm_visit/data/local_database.dart`.
 | Column | Type | Notes |
 |---|---|---|
 | id | TEXT, PK | generated on-device (not a backend ID — no backend row exists) |
+| employee_id | TEXT | the logged-in engineer's Employee ID, threaded through from login |
 | pop_id | INTEGER | the backend `POP.id` this visit is for |
 | pop_code | TEXT | denormalized for display without a join |
+| district, block, gp | TEXT | the POP's District/Block/GP names, denormalized from POP Selection at the moment the visit starts |
 | started_at | TEXT (ISO 8601) | device-local timestamp |
+| status | TEXT | the visit's offline-first sync lifecycle — see "Offline Storage & Synchronization" below |
 
 **`pm_photos`** (one row per *confirmed* mandatory photo; retake
 replaces the row for the same `(visit_id, category)`):
@@ -208,6 +211,57 @@ is never modified.
   GPS fix succeeds. No fake/placeholder coordinates are ever used.
 - If watermarking itself fails (e.g. an undecodable image), the
   capture is discarded the same way — the category stays Pending.
+
+### Offline Storage & Synchronization (foundation)
+
+The app must work with no network connection: starting a visit,
+capturing all 5 photos, GPS, and the watermark all happen with zero
+network calls, and everything lands in the `pm_visits`/`pm_photos`
+tables above — nothing is held only in memory. Closing and reopening
+the app does not lose a visit: `PmVisitController.startVisit` looks for
+an incomplete (LOCAL_ONLY) visit for the same POP via
+`PmVisitRepository.getResumableVisit` and continues it, rather than
+starting a duplicate.
+
+**`pm_visits.status` — `VisitSyncStatus`** (implementation:
+`mobile_app/lib/features/pm_visit/domain/entities/visit_sync_status.dart`):
+
+| Value | Meaning |
+|---|---|
+| `localOnly` | Visit started; photos still being captured. Nothing to sync yet. |
+| `pendingSync` | All 5 mandatory photos confirmed. Set automatically, offline, the moment the 5th is confirmed — no button press, no network call. |
+| `syncing` | A sync attempt is in progress right now. |
+| `synced` | Sync completed successfully. **Not reachable yet** — see below. |
+| `syncFailed` | The most recent sync attempt failed. The visit and its photos are **never** deleted for this; it stays eligible for retry. |
+
+**Google Drive upload is not implemented in this module** — only the
+interface it will use:
+
+- `DriveUploadService` (`domain/services/drive_upload_service.dart`):
+  `Future<void> uploadVisit(PmVisit visit, List<PmPhotoRecord> photos)`.
+- `NotImplementedDriveUploadService` (`data/`) is the only
+  implementation that exists today, and it always throws. This is
+  deliberate: it lets the sync queue/retry state machine be built and
+  tested now, while guaranteeing nothing ever claims a photo was
+  uploaded when it wasn't. `synced` is therefore not reachable in
+  practice until a real Drive-backed implementation replaces it — no
+  other code needs to change when that happens.
+
+**`SyncManager`** (`data/sync_manager.dart`) is the queue:
+`getVisitsEligibleForSync()` returns visits in `pendingSync` or
+`syncFailed`; `syncVisit(visit)` is retry-safe —
+`pendingSync`/`syncFailed` → `syncing` → `synced` (success) or back to
+`syncFailed` (failure) — and only ever touches the `status` column,
+never photos or other visit fields. If there's no connection
+(`ConnectivityService`, via `connectivity_plus`), nothing is attempted
+at all and the status is left exactly as it was. `trySyncPendingVisits()`
+attempts every eligible visit; one failing does not stop the others.
+
+Per-photo `upload_status` (`pending`/`uploaded`/`failed`, from the PM
+Photo Capture module) is intentionally left alone by this foundation —
+it stays `pending` for every photo until a real Drive upload sets it,
+since syncing today only ever exercises the visit-level state machine
+against a placeholder that cannot succeed.
 
 ## Compliance / Reporting (derived, not stored directly)
 
