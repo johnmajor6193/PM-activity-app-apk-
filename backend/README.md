@@ -12,13 +12,15 @@ app/
 ├── core/
 │   ├── config.py        # settings (env vars / .env), incl. auth_mode, secret_key
 │   └── security.py      # JWT create/decode
-├── api/v1/
-│   ├── router.py        # aggregates all v1 routers
-│   └── endpoints/
-│       ├── auth.py        # POST /auth/login (implemented)
-│       ├── locations.py   # District/Block/GP/POP hierarchy (implemented, no GPS fields)
-│       ├── visits.py      # POST /visits/{id}/sync - Google Drive upload (implemented)
-│       └── dashboard.py   # router wired, no endpoints yet
+├── api/
+│   ├── deps.py          # get_current_employee() - JWT verification dependency, see "Protected endpoints" below
+│   └── v1/
+│       ├── router.py        # aggregates all v1 routers
+│       └── endpoints/
+│           ├── auth.py        # POST /auth/login (implemented, public)
+│           ├── locations.py   # District/Block/GP/POP hierarchy (implemented, protected)
+│           ├── visits.py      # POST /visits/{id}/sync - Google Drive upload (implemented, protected)
+│           └── dashboard.py   # router wired, no endpoints yet
 ├── models/
 │   ├── employee.py          # Employee ORM model (implemented)
 │   ├── district.py, block.py, grama_panchayat.py, pop.py  # location hierarchy (implemented)
@@ -40,15 +42,16 @@ app/
     ├── base.py                 # GoogleDriveUploadService interface, VisitMetadata/PhotoUploadItem/PhotoUploadResult
     ├── naming.py                # build_drive_folder_segments / build_drive_filename (pure, unit-tested)
     ├── google_drive_upload_service.py  # GoogleDriveServiceAccountUploadService: the real implementation
-    ├── not_implemented_drive_upload_service.py  # NotConfiguredDriveUploadService: fails clearly, no credentials needed
+    ├── not_configured_drive_upload_service.py  # NotConfiguredDriveUploadService: fails clearly, no credentials needed
     ├── fake_drive_upload_service.py     # FakeDriveUploadService: in-memory, for tests
     └── __init__.py               # get_drive_upload_service() factory, keyed on settings.google_service_account_file
 tests/
-├── conftest.py            # points the app at an isolated SQLite file; `client`/`db_session` fixtures
+├── conftest.py            # points the app at an isolated SQLite file; `client`/`db_session`/`auth_headers` fixtures
 ├── test_health.py
-├── test_auth.py           # login success/failure/validation/inactive-account cases
-├── test_locations.py      # hierarchy listing, active-only filtering, POP detail, 404s
-└── test_drive_sync.py     # upload success/failure/retry/idempotency, folder path, file naming
+├── test_auth.py              # login success/failure/validation/inactive-account cases
+├── test_auth_dependency.py   # get_current_employee JWT verification: valid/missing/malformed/expired/wrong-claims
+├── test_locations.py         # hierarchy listing, active-only filtering, POP detail, 404s, anonymous rejection
+└── test_drive_sync.py        # upload success/failure/retry/idempotency, folder path, file naming, auth
 ```
 
 ## Status
@@ -99,6 +102,50 @@ checks `mobile_number` matches — no OTP, no password. It's selected via
 To add OTP later: implement a new `AuthStrategy` (e.g. `OtpStrategy`),
 add an `"otp"` branch to `get_auth_strategy()`, and set
 `AUTH_MODE=otp`. The endpoint and schemas do not need to change.
+
+### Protected endpoints (JWT verification)
+
+`POST /auth/login` issues a signed JWT (`app/core/security.py`), but
+until now nothing actually verified one on any later request — every
+other endpoint was reachable with no token at all. `app/api/deps.py`
+adds `get_current_employee`, a FastAPI dependency that every protected
+endpoint now depends on:
+
+- **Protected** (require `Authorization: Bearer <token>`): every
+  `/api/v1/locations/*` route (district/block/GP/POP lookups — wired at
+  the router level, `app/api/v1/endpoints/locations.py`) and
+  `POST /api/v1/visits/{visit_id}/sync` (`app/api/v1/endpoints/visits.py`).
+- **Intentionally public**: `GET /health` (liveness check) and
+  `POST /api/v1/auth/login` (this is how a token is obtained in the
+  first place).
+- The empty `dashboard` router has no routes yet, so there is nothing
+  to protect there — add the dependency when it gets its first
+  endpoint.
+
+`get_current_employee` rejects with **401** (the request is never
+processed) when the `Authorization` header is missing, isn't a Bearer
+token, the JWT is malformed, its signature doesn't verify against
+`settings.secret_key`, it has expired, or its `sub` claim doesn't match
+an active `Employee` — all cases return the same generic
+"Could not validate credentials." message (so a forged token can't be
+debugged against the response), and nothing ever logs the token itself
+or any claim value.
+
+**`POST /visits/{visit_id}/sync` no longer trusts `employee_id` from
+the request body.** The Google Drive metadata (`appProperties.employee_id`
+on each uploaded file) always comes from `current_employee.employee_code`
+— the verified JWT identity — even though the Flutter app still sends
+its own `employee_id` in `visit_metadata` (unchanged wire format; that
+field is simply no longer used for identity).
+
+The JWT signing key (`settings.secret_key`) and verification logic stay
+entirely server-side; nothing about this was added to or changed in
+the Flutter app's own credentials. The mobile app now keeps the
+`access_token` from a successful login in memory
+(`mobile_app/lib/core/network/auth_session.dart`, never persisted to
+disk or logged) and attaches it as `Authorization: Bearer <token>` on
+every locations/sync request — see `mobile_app/README.md`. The login
+UI and `/auth/login` request/response themselves are unchanged.
 
 In `auth_mode == "dev"`, the app seeds two demo employees on startup if
 the `employees` table is empty, and a small District → Block → GP → POP
@@ -269,15 +316,23 @@ cp .env.example .env   # edit DATABASE_URL if needed
 
 uvicorn app.main:app --reload
 # then: curl http://127.0.0.1:8000/health
-# or:   curl -X POST http://127.0.0.1:8000/api/v1/auth/login \
-#         -H "Content-Type: application/json" \
-#         -d '{"employee_id": "ENG001", "mobile_number": "9876543210"}'
-# or:   curl http://127.0.0.1:8000/api/v1/locations/districts
-# or (Google Drive upload - "failed"/"not configured" unless GOOGLE_SERVICE_ACCOUNT_FILE is set):
-#       curl -X POST http://127.0.0.1:8000/api/v1/visits/visit-1/sync \
-#         -F 'visit_metadata={"visit_id":"visit-1","employee_id":"ENG001","pop_id":7,"pop_code":"POP-00125","district":"Chennai","block":"Sholinganallur","gp":"Semmancheri GP","visit_date":"2026-11-17"}' \
-#         -F 'photos_metadata=[{"category":"pop_rack","captured_at":"2026-11-17T17:25:42","latitude":11.1,"longitude":77.2,"accuracy_m":4.0}]' \
-#         -F 'files=@/path/to/pop_rack_watermarked.jpg'
+#
+# /locations/* and /visits/{id}/sync now require a token (see
+# "Protected endpoints (JWT verification)" above) - log in first:
+#
+#   TOKEN=$(curl -s -X POST http://127.0.0.1:8000/api/v1/auth/login \
+#     -H "Content-Type: application/json" \
+#     -d '{"employee_id": "ENG001", "mobile_number": "9876543210"}' \
+#     | python3 -c 'import sys, json; print(json.load(sys.stdin)["access_token"])')
+#
+#   curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/v1/locations/districts
+#
+#   # Google Drive upload - "failed"/"not configured" unless GOOGLE_SERVICE_ACCOUNT_FILE is set:
+#   curl -X POST http://127.0.0.1:8000/api/v1/visits/visit-1/sync \
+#     -H "Authorization: Bearer $TOKEN" \
+#     -F 'visit_metadata={"visit_id":"visit-1","employee_id":"ENG001","pop_id":7,"pop_code":"POP-00125","district":"Chennai","block":"Sholinganallur","gp":"Semmancheri GP","visit_date":"2026-11-17"}' \
+#     -F 'photos_metadata=[{"category":"pop_rack","captured_at":"2026-11-17T17:25:42","latitude":11.1,"longitude":77.2,"accuracy_m":4.0}]' \
+#     -F 'files=@/path/to/pop_rack_watermarked.jpg'
 ```
 
 Run tests (uses an isolated SQLite file via `tests/conftest.py` — no

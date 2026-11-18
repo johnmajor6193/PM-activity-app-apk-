@@ -3,6 +3,8 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 
+from app.api.deps import get_current_employee
+from app.models.employee import Employee
 from app.schemas.drive_sync import PhotoSyncMetadata, PhotoSyncResult, VisitSyncMetadata, VisitSyncResponse
 from app.services.drive import GoogleDriveUploadService, get_drive_upload_service
 from app.services.drive.base import PhotoUploadItem, VisitMetadata
@@ -26,8 +28,16 @@ def sync_visit(
         ..., description="The 5 watermarked photo files, in the same order as photos_metadata."
     ),
     drive_service: GoogleDriveUploadService = Depends(get_drive_upload_service),
+    current_employee: Employee = Depends(get_current_employee),
 ) -> VisitSyncResponse:
     """Uploads a PM visit's watermarked photos to Google Drive.
+
+    Requires a logged-in employee (see app/api/deps.py). The uploaded
+    `employee_id` metadata always comes from the verified JWT
+    (`current_employee.employee_code`), never from `visit_metadata` in
+    the request body — the Flutter app still sends its own
+    `employee_id` there (unchanged wire format), but it is ignored for
+    this purpose rather than trusted.
 
     This is the backend upload interface the Flutter app's
     GoogleDriveUploadService calls — Google credentials live only on
@@ -68,7 +78,7 @@ def sync_visit(
 
     visit = VisitMetadata(
         visit_id=visit_data.visit_id,
-        employee_id=visit_data.employee_id,
+        employee_id=current_employee.employee_code,
         pop_id=visit_data.pop_id,
         pop_code=visit_data.pop_code,
         district=visit_data.district,

@@ -4,10 +4,33 @@ from datetime import datetime
 
 from app.main import app
 from app.services.drive import GoogleDriveUploadService, get_drive_upload_service
-from app.services.drive.base import PhotoUploadItem, VisitMetadata
+from app.services.drive.base import PhotoUploadItem, PhotoUploadResult, VisitMetadata
 from app.services.drive.fake_drive_upload_service import FakeDriveUploadService
 from app.services.drive.naming import build_drive_filename, build_drive_folder_segments
 from app.services.drive.not_configured_drive_upload_service import NotConfiguredDriveUploadService
+
+
+class _SpyDriveUploadService(GoogleDriveUploadService):
+    """Records the VisitMetadata it was called with, so a test can
+    verify which `employee_id` actually reached the Drive upload step -
+    without this, a test could only see the HTTP response, not what the
+    endpoint internally trusted."""
+
+    def __init__(self) -> None:
+        self.last_visit: VisitMetadata | None = None
+
+    def upload_visit_photos(self, visit, photos):
+        self.last_visit = visit
+        return [
+            PhotoUploadResult(
+                category=photo.category,
+                drive_file_id=f"spy-file-{photo.category}",
+                drive_file_link="",
+                duplicate=False,
+            )
+            for photo in photos
+        ]
+
 
 _MANDATORY_CATEGORIES = [
     "pop_rack",
@@ -41,7 +64,9 @@ def _photo_metadata(category: str) -> dict:
     }
 
 
-def _post_sync(client, visit_id: str, visit_metadata: dict, categories: list[str]):
+def _post_sync(
+    client, visit_id: str, visit_metadata: dict, categories: list[str], headers: dict | None = None
+):
     photos_metadata = [_photo_metadata(category) for category in categories]
     files = [
         ("files", (f"{category}.jpg", io.BytesIO(b"fake-photo-bytes"), "image/jpeg"))
@@ -54,6 +79,7 @@ def _post_sync(client, visit_id: str, visit_metadata: dict, categories: list[str
             "photos_metadata": json.dumps(photos_metadata),
         },
         files=files,
+        headers=headers,
     )
 
 
@@ -65,12 +91,14 @@ def _clear_drive_override() -> None:
     app.dependency_overrides.pop(get_drive_upload_service, None)
 
 
-def test_successful_upload_of_all_five_photos(client):
+def test_successful_upload_of_all_five_photos(client, auth_headers):
     fake = FakeDriveUploadService()
     _use_fake_drive_service(fake)
     try:
         visit = _visit_metadata()
-        response = _post_sync(client, visit["visit_id"], visit, _MANDATORY_CATEGORIES)
+        response = _post_sync(
+            client, visit["visit_id"], visit, _MANDATORY_CATEGORIES, headers=auth_headers
+        )
 
         assert response.status_code == 200
         body = response.json()
@@ -83,12 +111,14 @@ def test_successful_upload_of_all_five_photos(client):
         _clear_drive_override()
 
 
-def test_upload_failure_is_reported_as_a_clean_failed_response(client):
+def test_upload_failure_is_reported_as_a_clean_failed_response(client, auth_headers):
     fake = FakeDriveUploadService(fail=True)
     _use_fake_drive_service(fake)
     try:
         visit = _visit_metadata()
-        response = _post_sync(client, visit["visit_id"], visit, _MANDATORY_CATEGORIES)
+        response = _post_sync(
+            client, visit["visit_id"], visit, _MANDATORY_CATEGORIES, headers=auth_headers
+        )
 
         assert response.status_code == 200  # the HTTP call succeeds; the sync itself failed
         body = response.json()
@@ -98,16 +128,20 @@ def test_upload_failure_is_reported_as_a_clean_failed_response(client):
         _clear_drive_override()
 
 
-def test_retry_after_failure_succeeds_once_the_service_recovers(client):
+def test_retry_after_failure_succeeds_once_the_service_recovers(client, auth_headers):
     fake = FakeDriveUploadService(fail=True)
     _use_fake_drive_service(fake)
     try:
         visit = _visit_metadata()
-        first = _post_sync(client, visit["visit_id"], visit, _MANDATORY_CATEGORIES)
+        first = _post_sync(
+            client, visit["visit_id"], visit, _MANDATORY_CATEGORIES, headers=auth_headers
+        )
         assert first.json()["status"] == "failed"
 
         fake.fail = False
-        second = _post_sync(client, visit["visit_id"], visit, _MANDATORY_CATEGORIES)
+        second = _post_sync(
+            client, visit["visit_id"], visit, _MANDATORY_CATEGORIES, headers=auth_headers
+        )
 
         assert second.json()["status"] == "synced"
         assert fake.call_count == 2
@@ -115,17 +149,21 @@ def test_retry_after_failure_succeeds_once_the_service_recovers(client):
         _clear_drive_override()
 
 
-def test_resyncing_the_same_visit_does_not_create_duplicate_files(client):
+def test_resyncing_the_same_visit_does_not_create_duplicate_files(client, auth_headers):
     fake = FakeDriveUploadService()
     _use_fake_drive_service(fake)
     try:
         visit = _visit_metadata()
-        first = _post_sync(client, visit["visit_id"], visit, _MANDATORY_CATEGORIES)
+        first = _post_sync(
+            client, visit["visit_id"], visit, _MANDATORY_CATEGORIES, headers=auth_headers
+        )
         first_photos = {p["category"]: p["drive_file_id"] for p in first.json()["photos"]}
 
         # Simulate retrying the sync (e.g. the app wasn't sure the first
         # attempt made it to the server) with the exact same visit.
-        second = _post_sync(client, visit["visit_id"], visit, _MANDATORY_CATEGORIES)
+        second = _post_sync(
+            client, visit["visit_id"], visit, _MANDATORY_CATEGORIES, headers=auth_headers
+        )
         second_body = second.json()
 
         assert second_body["status"] == "synced"
@@ -136,11 +174,13 @@ def test_resyncing_the_same_visit_does_not_create_duplicate_files(client):
         _clear_drive_override()
 
 
-def test_not_configured_drive_service_fails_clearly(client):
+def test_not_configured_drive_service_fails_clearly(client, auth_headers):
     _use_fake_drive_service(NotConfiguredDriveUploadService())
     try:
         visit = _visit_metadata()
-        response = _post_sync(client, visit["visit_id"], visit, _MANDATORY_CATEGORIES)
+        response = _post_sync(
+            client, visit["visit_id"], visit, _MANDATORY_CATEGORIES, headers=auth_headers
+        )
 
         assert response.status_code == 200
         body = response.json()
@@ -150,12 +190,14 @@ def test_not_configured_drive_service_fails_clearly(client):
         _clear_drive_override()
 
 
-def test_mismatched_visit_id_between_path_and_metadata_is_rejected(client):
+def test_mismatched_visit_id_between_path_and_metadata_is_rejected(client, auth_headers):
     fake = FakeDriveUploadService()
     _use_fake_drive_service(fake)
     try:
         visit = _visit_metadata(visit_id="visit-1")
-        response = _post_sync(client, "visit-DIFFERENT", visit, _MANDATORY_CATEGORIES)
+        response = _post_sync(
+            client, "visit-DIFFERENT", visit, _MANDATORY_CATEGORIES, headers=auth_headers
+        )
 
         assert response.json()["status"] == "failed"
         assert fake.call_count == 0
@@ -163,7 +205,7 @@ def test_mismatched_visit_id_between_path_and_metadata_is_rejected(client):
         _clear_drive_override()
 
 
-def test_mismatched_photo_count_is_rejected(client):
+def test_mismatched_photo_count_is_rejected(client, auth_headers):
     fake = FakeDriveUploadService()
     _use_fake_drive_service(fake)
     try:
@@ -182,10 +224,44 @@ def test_mismatched_photo_count_is_rejected(client):
                 "photos_metadata": json.dumps(photos_metadata),
             },
             files=files,
+            headers=auth_headers,
         )
 
         assert response.json()["status"] == "failed"
         assert fake.call_count == 0
+    finally:
+        _clear_drive_override()
+
+
+def test_visits_sync_rejects_anonymous_requests(client):
+    """Regression test for the audit finding that /visits/{id}/sync was
+    previously reachable with no token at all."""
+    visit = _visit_metadata()
+    response = _post_sync(client, visit["visit_id"], visit, _MANDATORY_CATEGORIES)
+
+    assert response.status_code == 401
+
+
+def test_employee_id_sent_to_drive_comes_from_the_verified_jwt_not_the_request_body(
+    client, auth_headers
+):
+    """The Flutter app's own `visit_metadata.employee_id` must never be
+    trusted for identity - this proves the endpoint uses
+    `current_employee.employee_code` (from the JWT) instead, even when
+    the request body claims to be a different employee."""
+    spy = _SpyDriveUploadService()
+    _use_fake_drive_service(spy)
+    try:
+        visit = _visit_metadata()
+        visit["employee_id"] = "SPOOFED-EMPLOYEE-ID"  # auth_headers is logged in as ENG001
+
+        response = _post_sync(
+            client, visit["visit_id"], visit, _MANDATORY_CATEGORIES, headers=auth_headers
+        )
+
+        assert response.json()["status"] == "synced"
+        assert spy.last_visit is not None
+        assert spy.last_visit.employee_id == "ENG001"
     finally:
         _clear_drive_override()
 

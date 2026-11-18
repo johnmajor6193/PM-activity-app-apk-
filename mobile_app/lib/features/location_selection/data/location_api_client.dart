@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 import '../../../core/network/api_config.dart';
+import '../../../core/network/auth_session.dart';
 import '../domain/location_failure.dart';
 
 /// Raw HTTP client for the /api/v1/locations endpoints. Kept separate
@@ -37,10 +38,14 @@ class LocationApiClient {
 
   Future<dynamic> _get(String path) async {
     final uri = Uri.parse('${ApiConfig.baseUrl}$path');
+    final token = AuthSession.instance.accessToken;
 
     http.Response response;
     try {
-      response = await _httpClient.get(uri);
+      response = await _httpClient.get(
+        uri,
+        headers: token == null ? null : {'Authorization': 'Bearer $token'},
+      );
     } on SocketException {
       throw const LocationFailure(
         'Could not reach the server. Check your connection and try again.',

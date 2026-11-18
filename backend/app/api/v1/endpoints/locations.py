@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_employee
 from app.db.deps import get_db
 from app.models.block import Block
 from app.models.district import District
@@ -8,7 +9,12 @@ from app.models.grama_panchayat import GramaPanchayat
 from app.models.pop import Pop
 from app.schemas.location import BlockOut, DistrictOut, GpOut, PopDetail, PopSummary
 
-router = APIRouter(prefix="/locations", tags=["locations"])
+# Every route below requires a logged-in employee - these are the
+# District -> Block -> GP -> POP lookups the mobile app's POP Selection
+# screen depends on, only reachable after Employee Login.
+router = APIRouter(
+    prefix="/locations", tags=["locations"], dependencies=[Depends(get_current_employee)]
+)
 
 
 def _get_or_404(db: Session, model: type, obj_id: int, label: str):

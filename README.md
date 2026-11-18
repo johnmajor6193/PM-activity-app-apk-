@@ -71,6 +71,14 @@ a development/test authentication mode (Employee ID + mobile number, no
 OTP) designed to be swapped for OTP-based auth later without changing
 the screens or endpoint — see `backend/README.md` ("Auth design").
 
+**The issued JWT is now verified on every protected endpoint.**
+`/locations/*` and `/visits/{id}/sync` require a valid
+`Authorization: Bearer <token>` — the backend rejects a missing,
+malformed, expired, or wrongly-signed token (or one for an unknown/
+inactive employee) with 401 before processing the request; `/health`
+and `/auth/login` remain intentionally public. See `backend/README.md`
+("Protected endpoints (JWT verification)").
+
 **POP Selection is implemented** (Flutter cascading District → Block →
 GP → POP screen, FastAPI `/locations/*` endpoints, `District`/`Block`/
 `GramaPanchayat`/`Pop` data models).

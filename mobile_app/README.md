@@ -66,6 +66,18 @@ emulator's alias for the host machine running the FastAPI backend on
 `localhost:8000`). Override with:
 `flutter run --dart-define=API_BASE_URL=http://<host>:8000`.
 
+**The JWT the backend returns is now actually used.** The backend's
+`/locations/*` and `/visits/{id}/sync` endpoints verify a Bearer token
+on every request (see `backend/README.md`, "Protected endpoints (JWT
+verification)") — previously issued on login but never checked
+anywhere. `DevLoginAuthRepository` stores the `access_token` from a
+successful login in `AuthSession`
+(`lib/core/network/auth_session.dart`) — in memory only, never written
+to disk and never logged — and `LocationApiClient` /
+`GoogleDriveUploadService` now attach it as `Authorization: Bearer
+<token>` on every request. The login screen, its request/response
+shape, and `AuthController` are otherwise unchanged.
+
 **POP Selection is implemented.** From `ProfileScreen`, "Select POP"
 opens `PopSelectionScreen`: cascading District → Block → GP → POP
 dropdowns, each loaded from the backend as the one above it is chosen,

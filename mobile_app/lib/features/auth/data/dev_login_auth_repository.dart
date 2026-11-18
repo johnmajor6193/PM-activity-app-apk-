@@ -1,3 +1,4 @@
+import '../../../core/network/auth_session.dart';
 import '../domain/entities/employee_profile.dart';
 import '../domain/repositories/auth_repository.dart';
 import 'auth_api_client.dart';
@@ -25,8 +26,14 @@ class DevLoginAuthRepository implements AuthRepository {
     );
 
     final employeeJson = json['employee'] as Map<String, dynamic>;
+    final accessToken = json['access_token'] as String;
+    // Backend endpoints now verify this token (see
+    // backend/app/api/deps.py) - held in memory so LocationApiClient
+    // and GoogleDriveUploadService can attach it, not persisted and
+    // never logged.
+    AuthSession.instance.accessToken = accessToken;
     return AuthResult(
-      accessToken: json['access_token'] as String,
+      accessToken: accessToken,
       profile: EmployeeProfile(
         employeeId: employeeJson['employee_id'] as String,
         name: employeeJson['name'] as String,

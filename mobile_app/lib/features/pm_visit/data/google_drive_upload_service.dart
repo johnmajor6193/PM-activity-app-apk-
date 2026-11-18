@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 import '../../../core/network/api_config.dart';
+import '../../../core/network/auth_session.dart';
 import '../domain/entities/pm_photo_record.dart';
 import '../domain/entities/pm_visit.dart';
 import '../domain/entities/photo_category.dart';
@@ -39,17 +40,21 @@ class GoogleDriveUploadService implements DriveUploadService {
     }
 
     final uri = Uri.parse('${ApiConfig.baseUrl}/api/v1/visits/${visit.id}/sync');
-    final request = http.MultipartRequest('POST', uri)
-      ..fields['visit_metadata'] = jsonEncode({
-        'visit_id': visit.id,
-        'employee_id': visit.employeeId,
-        'pop_id': visit.popId,
-        'pop_code': visit.popCode,
-        'district': visit.districtName,
-        'block': visit.blockName,
-        'gp': visit.gpName,
-        'visit_date': _dateOnly(visit.startedAt),
-      });
+    final request = http.MultipartRequest('POST', uri);
+    final token = AuthSession.instance.accessToken;
+    if (token != null) {
+      request.headers['Authorization'] = 'Bearer $token';
+    }
+    request.fields['visit_metadata'] = jsonEncode({
+      'visit_id': visit.id,
+      'employee_id': visit.employeeId,
+      'pop_id': visit.popId,
+      'pop_code': visit.popCode,
+      'district': visit.districtName,
+      'block': visit.blockName,
+      'gp': visit.gpName,
+      'visit_date': _dateOnly(visit.startedAt),
+    });
 
     final photosMetadata = <Map<String, dynamic>>[];
     for (final category in mandatoryPhotoCategories) {
