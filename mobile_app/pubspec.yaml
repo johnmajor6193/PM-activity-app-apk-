@@ -19,9 +19,14 @@ dependencies:
   image: ^4.3.0 # pure-Dart GPS watermark burn-in (no platform channel)
   connectivity_plus: ^6.1.0 # detects whether sync is possible right now
 
-  # Planned for later steps (not added yet, listed here for reference only):
-  # workmanager            - background sync
-  # googleapis / google_sign_in - Google Drive upload
+  # Google Drive upload deliberately added NO googleapis/google_sign_in
+  # dependency here: the app never holds Google credentials. Uploads go
+  # through the existing backend's POST /visits/{id}/sync over `http`
+  # (see data/google_drive_upload_service.dart) — adding either package
+  # to this app would violate that design.
+  #
+  # Still not added (optional, for a later step):
+  # workmanager - background/scheduled sync (submission is user-triggered only today)
 
 dev_dependencies:
   flutter_test:

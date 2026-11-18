@@ -4,7 +4,8 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 ///
 /// This only detects that sync is *possible* right now (Wi-Fi/mobile
 /// attached) — it says nothing about whether an upload would actually
-/// succeed; that is DriveUploadService's job, once one exists.
+/// succeed; that is DriveUploadService's job (see
+/// google_drive_upload_service.dart).
 class ConnectivityService {
   ConnectivityService({Connectivity? connectivity}) : _connectivity = connectivity ?? Connectivity();
 

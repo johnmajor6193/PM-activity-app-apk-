@@ -67,8 +67,17 @@ official POP coordinate master data has not been supplied, and none of
 the code, seed data, or API responses use placeholder/fake coordinates.
 POP geofence validation is deferred until that data exists — see
 `app/models/pop.py` and `docs/data-model.md` ("POP Geo-Coordinates —
-Deferred"). This does not affect per-photo GPS capture, which is a
-separate, still-unbuilt PM visit module.
+Deferred"). This does not affect per-photo GPS capture: the mobile app's
+PM Visit module captures and watermarks live per-photo GPS entirely
+on-device (no backend involvement) — see `docs/data-model.md`.
+
+**`POST /api/v1/visits/{visit_id}/sync` is implemented.** This is the
+Google Drive upload relay the Flutter app's PM Visit Submission step
+calls: it accepts a visit's 5 watermarked photos plus metadata and
+uploads them to Google Drive (or fails clearly if no service account
+is configured) — see "Google Drive Upload" below. There is still no
+backend `PMVisit`/`PMPhoto` table; this endpoint is a stateless relay,
+not a persisted visit record.
 
 `Employee.assigned_district_name` remains a plain string (not a `District`
 FK) — Employee Login was kept unchanged while building this module; see

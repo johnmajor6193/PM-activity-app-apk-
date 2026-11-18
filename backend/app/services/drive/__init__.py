@@ -3,7 +3,7 @@ from functools import lru_cache
 from app.core.config import settings
 from app.services.drive.base import GoogleDriveUploadService
 from app.services.drive.google_drive_upload_service import GoogleDriveServiceAccountUploadService
-from app.services.drive.not_implemented_drive_upload_service import NotConfiguredDriveUploadService
+from app.services.drive.not_configured_drive_upload_service import NotConfiguredDriveUploadService
 
 __all__ = ["GoogleDriveUploadService", "get_drive_upload_service"]
 

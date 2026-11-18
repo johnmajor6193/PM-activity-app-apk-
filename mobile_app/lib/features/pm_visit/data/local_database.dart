@@ -6,16 +6,17 @@ import 'package:sqflite/sqflite.dart';
 /// Opens (and, on first run, creates) the on-device SQLite database that
 /// stores in-progress PM visits and their confirmed photos.
 ///
-/// There is no remote sync yet (see SyncManager/DriveUploadService for
-/// the placeholders that will drive it), so a visit and its photos stay
-/// available with no network connection and across app restarts.
-/// `watermarked_file_path` holds the GPS-watermarked evidence copy (see
-/// WatermarkService) alongside the untouched original in
-/// `local_file_path`. `drive_file_id` and `drive_file_link` remain
-/// reserved, nullable, and unwritten — for the later Google Drive
-/// upload step. `pm_visits.status` is the offline-first sync lifecycle
-/// (see VisitSyncStatus): localOnly -> pendingSync once all 5 photos
-/// are confirmed -> syncing/synced/syncFailed once a sync is attempted.
+/// A visit and its photos stay available with no network connection and
+/// across app restarts; the on-device data is never required for
+/// capture, only for sync/submission (see SyncManager and
+/// PmVisitController.submitVisit). `watermarked_file_path` holds the
+/// GPS-watermarked evidence copy (see WatermarkService) alongside the
+/// untouched original in `local_file_path`. `drive_file_id` and
+/// `drive_file_link` remain reserved, nullable, and unwritten — nothing
+/// maps the per-photo Google Drive upload result back into these
+/// columns today. `pm_visits.status` is the full visit lifecycle (see
+/// VisitSyncStatus): draft -> inProgress -> readyForSubmission ->
+/// pendingSync -> syncing -> synced -> submitted, or -> syncFailed.
 class PmVisitLocalDatabase {
   PmVisitLocalDatabase._({String? customDatabasePath}) : _customDatabasePath = customDatabasePath;
 
@@ -54,7 +55,7 @@ class PmVisitLocalDatabase {
             block TEXT NOT NULL,
             gp TEXT NOT NULL,
             started_at TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'localOnly'
+            status TEXT NOT NULL DEFAULT 'draft'
           )
         ''');
 

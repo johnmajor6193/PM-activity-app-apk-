@@ -7,7 +7,7 @@ from app.services.drive import GoogleDriveUploadService, get_drive_upload_servic
 from app.services.drive.base import PhotoUploadItem, VisitMetadata
 from app.services.drive.fake_drive_upload_service import FakeDriveUploadService
 from app.services.drive.naming import build_drive_filename, build_drive_folder_segments
-from app.services.drive.not_implemented_drive_upload_service import NotConfiguredDriveUploadService
+from app.services.drive.not_configured_drive_upload_service import NotConfiguredDriveUploadService
 
 _MANDATORY_CATEGORIES = [
     "pop_rack",

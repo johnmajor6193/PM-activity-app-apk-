@@ -7,10 +7,11 @@ from app.db.base import Base
 class Employee(Base):
     """A field engineer / app user.
 
-    assigned_district_name is a plain string for now rather than a FK to
-    a District table, since the District/Block/GP/POP hierarchy has not
-    been implemented yet (see docs/data-model.md). It will be replaced by
-    assigned_district_id once that module exists.
+    assigned_district_name is a plain string rather than a FK to the
+    District table: Employee Login was deliberately kept unchanged
+    while the District/Block/GP/POP hierarchy was built afterward (see
+    docs/data-model.md). Linking it to a real district_id FK remains a
+    future step, not yet scheduled.
     """
 
     __tablename__ = "employees"

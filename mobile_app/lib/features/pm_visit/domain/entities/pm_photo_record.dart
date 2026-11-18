@@ -1,10 +1,11 @@
 import 'gps_reading.dart';
 import 'photo_category.dart';
 
-/// Tracks whether a confirmed photo has been synced anywhere yet. Upload
-/// logic itself (Google Drive) is not implemented in this module — this
-/// enum only prepares the field so offline capture and later sync don't
-/// need a schema change.
+/// Tracks whether a confirmed photo has been synced anywhere yet.
+/// Deliberately per-photo-granularity-ready, but nothing sets this past
+/// `pending` today: Google Drive upload (see GoogleDriveUploadService)
+/// and SyncManager only ever update the visit-level VisitSyncStatus,
+/// not this field — see docs/data-model.md.
 enum PhotoUploadStatus { pending, uploaded, failed }
 
 /// A single captured, engineer-confirmed PM visit photograph, with
