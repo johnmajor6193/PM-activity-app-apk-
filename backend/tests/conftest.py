@@ -53,3 +53,16 @@ def db_session(client):
         yield session
     finally:
         session.close()
+
+
+@pytest.fixture()
+def seeded_pop_id(db_session) -> int:
+    """The real database id of the auto-seeded POP-CHN-001 (see
+    app/db/seed_dev_data.py). Tests that sync/persist a visit must use
+    a real pop_id - SQLite (used here) does not enforce the
+    pm_visits.pop_id -> pops.id foreign key by default, so a made-up id
+    would silently "work" in tests while being invalid against the
+    real Postgres schema."""
+    from app.models.pop import Pop
+
+    return db_session.query(Pop).filter(Pop.pop_code == "POP-CHN-001").one().id

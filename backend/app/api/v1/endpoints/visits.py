@@ -2,13 +2,16 @@ import json
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
+from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_employee
+from app.db.deps import get_db
 from app.models.employee import Employee
 from app.schemas.drive_sync import PhotoSyncMetadata, PhotoSyncResult, VisitSyncMetadata, VisitSyncResponse
 from app.services.drive import GoogleDriveUploadService, get_drive_upload_service
 from app.services.drive.base import PhotoUploadItem, VisitMetadata
 from app.services.drive.naming import build_drive_filename
+from app.services.pm_visits import record_synced_visit
 
 router = APIRouter(prefix="/visits", tags=["visits"])
 
@@ -29,6 +32,7 @@ def sync_visit(
     ),
     drive_service: GoogleDriveUploadService = Depends(get_drive_upload_service),
     current_employee: Employee = Depends(get_current_employee),
+    db: Session = Depends(get_db),
 ) -> VisitSyncResponse:
     """Uploads a PM visit's watermarked photos to Google Drive.
 
@@ -49,6 +53,11 @@ def sync_visit(
     A non-"synced" response (or a non-200 status) means the Flutter
     app's SyncManager marks the visit SYNC_FAILED and retries later;
     nothing here deletes or requires deleting any local data.
+
+    On success, also records the visit (app/services/pm_visits.py) so
+    the District/Engineer/POP-wise dashboard
+    (app/api/v1/endpoints/dashboard.py) has something to aggregate —
+    this never runs before the Drive upload itself has succeeded.
     """
     try:
         visit_data = VisitSyncMetadata.model_validate_json(visit_metadata)
@@ -113,6 +122,20 @@ def sync_visit(
         results = drive_service.upload_visit_photos(visit, photo_items)
     except Exception as exc:  # noqa: BLE001 - any Drive failure must become a clean "failed" response
         return VisitSyncResponse(status="failed", message=str(exc))
+
+    try:
+        record_synced_visit(
+            db,
+            employee_id=current_employee.id,
+            visit=visit,
+            photos=photo_items,
+            results=results,
+        )
+    except Exception as exc:  # noqa: BLE001 - the photos are already on Drive; report clearly either way
+        return VisitSyncResponse(
+            status="failed",
+            message=f"Uploaded to Google Drive, but could not record the visit: {exc}",
+        )
 
     return VisitSyncResponse(
         status="synced",

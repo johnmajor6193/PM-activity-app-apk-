@@ -19,15 +19,17 @@ app/
 │       └── endpoints/
 │           ├── auth.py        # POST /auth/login (implemented, public)
 │           ├── locations.py   # District/Block/GP/POP hierarchy (implemented, protected)
-│           ├── visits.py      # POST /visits/{id}/sync - Google Drive upload (implemented, protected)
-│           └── dashboard.py   # router wired, no endpoints yet
+│           ├── visits.py      # POST /visits/{id}/sync - Google Drive upload + PmVisit persistence (implemented, protected)
+│           └── dashboard.py   # GET /dashboard/districts, /engineers, /pops/{id}/visits (implemented, protected)
 ├── models/
 │   ├── employee.py          # Employee ORM model (implemented)
 │   ├── district.py, block.py, grama_panchayat.py, pop.py  # location hierarchy (implemented)
+│   └── pm_visit.py, pm_photo.py  # backend-side record of a successfully synced visit (implemented, minimal - see docs/data-model.md)
 ├── schemas/
 │   ├── auth.py               # LoginRequest/LoginResponse/EmployeeProfile, with validation
 │   ├── location.py           # DistrictOut/BlockOut/GpOut/PopSummary/PopDetail
-│   └── drive_sync.py         # VisitSyncMetadata/PhotoSyncMetadata/VisitSyncResponse
+│   ├── drive_sync.py         # VisitSyncMetadata/PhotoSyncMetadata/VisitSyncResponse
+│   └── dashboard.py          # DistrictDashboardResponse/EngineerDashboardResponse/PopVisitOut
 ├── db/
 │   ├── base.py            # declarative base
 │   ├── session.py         # SQLAlchemy engine/session
@@ -38,20 +40,23 @@ app/
 │   ├── dev_login.py          # DevLoginStrategy: Employee ID + mobile number lookup
 │   ├── errors.py             # AuthenticationError
 │   └── __init__.py           # get_auth_strategy() factory, keyed on settings.auth_mode
-└── services/drive/           # Google Drive upload (modular, see "Google Drive Upload" below)
-    ├── base.py                 # GoogleDriveUploadService interface, VisitMetadata/PhotoUploadItem/PhotoUploadResult
-    ├── naming.py                # build_drive_folder_segments / build_drive_filename (pure, unit-tested)
-    ├── google_drive_upload_service.py  # GoogleDriveServiceAccountUploadService: the real implementation
-    ├── not_configured_drive_upload_service.py  # NotConfiguredDriveUploadService: fails clearly, no credentials needed
-    ├── fake_drive_upload_service.py     # FakeDriveUploadService: in-memory, for tests
-    └── __init__.py               # get_drive_upload_service() factory, keyed on settings.google_service_account_file
+├── services/drive/           # Google Drive upload (modular, see "Google Drive Upload" below)
+│   ├── base.py                 # GoogleDriveUploadService interface, VisitMetadata/PhotoUploadItem/PhotoUploadResult
+│   ├── naming.py                # build_drive_folder_segments / build_drive_filename (pure, unit-tested)
+│   ├── google_drive_upload_service.py  # GoogleDriveServiceAccountUploadService: the real implementation
+│   ├── not_configured_drive_upload_service.py  # NotConfiguredDriveUploadService: fails clearly, no credentials needed
+│   ├── fake_drive_upload_service.py     # FakeDriveUploadService: in-memory, for tests
+│   └── __init__.py               # get_drive_upload_service() factory, keyed on settings.google_service_account_file
+├── services/pm_visits.py     # record_synced_visit() - persists a visit only after its Drive upload succeeds
+└── services/compliance.py    # fortnight_bounds() + district/engineer/POP compliance aggregation, see "Dashboard" below
 tests/
-├── conftest.py            # points the app at an isolated SQLite file; `client`/`db_session`/`auth_headers` fixtures
+├── conftest.py            # points the app at an isolated SQLite file; `client`/`db_session`/`auth_headers`/`seeded_pop_id` fixtures
 ├── test_health.py
 ├── test_auth.py              # login success/failure/validation/inactive-account cases
 ├── test_auth_dependency.py   # get_current_employee JWT verification: valid/missing/malformed/expired/wrong-claims
 ├── test_locations.py         # hierarchy listing, active-only filtering, POP detail, 404s, anonymous rejection
-└── test_drive_sync.py        # upload success/failure/retry/idempotency, folder path, file naming, auth
+├── test_drive_sync.py        # upload success/failure/retry/idempotency, folder path, file naming, auth, PmVisit persistence
+└── test_dashboard.py         # fortnight_bounds unit tests + district/engineer/POP dashboard endpoints
 ```
 
 ## Status
@@ -78,16 +83,23 @@ on-device (no backend involvement) — see `docs/data-model.md`.
 Google Drive upload relay the Flutter app's PM Visit Submission step
 calls: it accepts a visit's 5 watermarked photos plus metadata and
 uploads them to Google Drive (or fails clearly if no service account
-is configured) — see "Google Drive Upload" below. There is still no
-backend `PMVisit`/`PMPhoto` table; this endpoint is a stateless relay,
-not a persisted visit record.
+is configured) — see "Google Drive Upload" below. On success, it now
+also persists a minimal `PmVisit`/`PmPhoto` record (see "Dashboard"
+below and `docs/data-model.md`) — this is not a full visit record the
+way the mobile app's own on-device tables are; it exists only to give
+the dashboard something to read.
+
+**District/Engineer/POP-wise Dashboard is implemented.**
+`GET /api/v1/dashboard/districts`, `/engineers`, and
+`/pops/{pop_id}/visits` read the `PmVisit`/`PmPhoto` rows above to
+report fortnightly compliance — see "Dashboard" below. No web UI exists
+for this yet (a later phase per the top-level README); these are the
+data endpoints it will eventually call. Monthly MIS/Excel export is a
+separate module, not built yet.
 
 `Employee.assigned_district_name` remains a plain string (not a `District`
 FK) — Employee Login was kept unchanged while building this module; see
 the note in `app/models/employee.py` and `docs/data-model.md`.
-
-Router for `dashboard` is still wired but empty. No MIS export logic
-exists yet.
 
 ### Auth design (dev login → OTP later)
 
@@ -301,6 +313,48 @@ this server" message — it never silently pretends to succeed.
   means changing how `GoogleDriveServiceAccountUploadService.__init__`
   builds its `credentials` object — the interface, the endpoint, and
   every other implementation are unaffected.
+
+### Dashboard (District / Engineer / POP-wise)
+
+Three protected (JWT-required, same as `/locations/*`) read-only
+endpoints, all under `/api/v1/dashboard`:
+
+| Endpoint | Reports |
+|---|---|
+| `GET /districts?date=YYYY-MM-DD` | Per District: how many of its *active* POPs got at least one fully-compliant visit in the fortnight containing `date` (default: today), and the compliance %. |
+| `GET /engineers?date=YYYY-MM-DD` | Per active Employee: visits synced and how many were fully compliant, in that same fortnight. Every active employee is listed, including zero-visit ones. |
+| `GET /pops/{pop_id}/visits` | Every synced visit for one POP, most recent first — not windowed to a fortnight. 404 if the POP doesn't exist. |
+
+**"Fully compliant"** means all 5 mandatory photo categories were
+actually persisted for that visit (`app/models/pm_photo.py:
+MANDATORY_PHOTO_CATEGORIES`) — not merely that a sync happened. This
+is computed from what the backend actually recorded, never a geofence
+check and never a POP coordinate.
+
+**Fortnight = calendar fortnight** (1st–15th, 16th–end-of-month) —
+`app/services/compliance.py:fortnight_bounds`. See `docs/data-model.md`
+("District / Engineer / POP-wise Dashboard") for why this was chosen
+over a rolling 14-day window, and for the exact `PmVisit`/`PmPhoto`
+schema this reads.
+
+**No web UI exists for this yet.** These are the data endpoints a
+later admin-dashboard phase will call; nothing in this step adds a
+page, a chart, or an Excel/MIS export.
+
+**Known scale limitation**: both the district and engineer endpoints
+load every `PmVisit` row and filter/aggregate in Python, not SQL. Fine
+at this project's current scale; would need an indexed, SQL-side date
+filter before a large production volume of visits makes that scan slow.
+
+```bash
+# after logging in and saving $TOKEN as shown further down:
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8000/api/v1/dashboard/districts?date=2026-11-20"
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8000/api/v1/dashboard/engineers?date=2026-11-20"
+curl -H "Authorization: Bearer $TOKEN" \
+  http://127.0.0.1:8000/api/v1/dashboard/pops/1/visits
+```
 
 ## Running locally
 

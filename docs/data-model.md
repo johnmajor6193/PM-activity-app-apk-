@@ -2,7 +2,12 @@
 
 This document defines the core entities and relationships the backend
 (PostgreSQL, via FastAPI) stores. Employee, District, Block, GP, and POP
-are implemented; PMVisit and PMPhoto are still planning-only.
+are fully implemented. PMVisit and PMPhoto exist backend-side only in
+the minimal form the District/Engineer/POP-wise dashboard needs (see
+"Backend PmVisit / PmPhoto" below) — the mobile app's own on-device
+tables (see "PM Visit & PM Photo — Local (On-Device) Implementation")
+remain the source of truth for capture, offline storage, and the
+submission lifecycle itself.
 
 ## POP Geo-Coordinates — Deferred, Not Faked
 
@@ -408,28 +413,118 @@ available. What has been verified is the full pipeline against
 `FakeDriveUploadService` (backend) and a mocked HTTP transport
 (Flutter) — see the top-level report for the exact test list.
 
-## Compliance / Reporting (derived, not stored directly)
+## Backend PmVisit / PmPhoto (dashboard data source)
 
-These are computed from the above, to support the dashboards and MIS
-export planned for a later phase:
+Implementation: `backend/app/models/pm_visit.py`,
+`backend/app/models/pm_photo.py`, written by
+`backend/app/services/pm_visits.py:record_synced_visit`, called from
+`POST /visits/{visit_id}/sync` (`backend/app/api/v1/endpoints/visits.py`)
+**only after** `drive_service.upload_visit_photos` has already
+succeeded for every photo — never before, and never on a failed or
+skipped sync.
 
-- **Fortnightly compliance**: for each POP, was a valid `PMVisit` (5/5
-  photos, within geofence) submitted in each fortnight period? The
-  geofence part is blocked on POP coordinates (see above); photo-count
-  and timing checks are not.
-- **District-wise dashboard**: aggregate compliance % by District.
-- **Engineer-wise dashboard**: visit count / compliance by Employee.
-- **POP-wise visit history**: chronological list of `PMVisit` per POP.
-- **Monthly MIS / Excel export**: tabular export of the above aggregates.
+This is a deliberately minimal backend-side record of "this visit's
+photos are confirmed on Google Drive" — it exists to give the
+District/Engineer/POP-wise dashboard (below) something to read, not to
+duplicate the mobile app's own on-device `pm_visits`/`pm_photos`
+tables (see "PM Visit & PM Photo — Local (On-Device) Implementation"
+above), which remain the source of truth for in-progress capture,
+offline storage, and the submission lifecycle. Resolves Open Decision
+#6 below: the client-generated visit id is accepted as-is as the
+backend `PmVisit.id`, no separate server-assigned id.
+
+**`pm_visits`**:
+
+| Column | Type | Notes |
+|---|---|---|
+| id | TEXT, PK | the same client-generated visit id used in the Drive folder path and the on-device database — not a separate backend-assigned id |
+| employee_id | FK → Employee | the **verified JWT identity** (`current_employee.id`), never `visit_metadata.employee_id` from the request body |
+| pop_id | FK → POP | |
+| visit_date | TEXT (YYYY-MM-DD) | the app-sent visit date; what fortnight compliance buckets by |
+| first_synced_at, last_synced_at | timestamp | when this backend first recorded the visit, and when it was last (re-)synced |
+
+`district_name`/`block_name`/`gp_name`/`pop_code` are **not** stored
+here — resolved by joining through `pop_id` → POP → GP → Block →
+District at query time (same pattern as `locations.py:get_pop`), so a
+dashboard query can never reflect a stale hierarchy name independently
+of what `/locations` reports today. There is also no `within_geofence`
+column and no visit-level check-in GPS — neither exists anywhere in
+this system (see "POP Geo-Coordinates — Deferred" above); only
+per-photo GPS (`pm_photos` below) is ever captured.
+
+**`pm_photos`** (composite PK `(visit_id, category)`, mirroring the
+on-device table's own PK): `captured_at`, `gps_lat`/`gps_lng`/
+`gps_accuracy_m`, `drive_file_id`, `drive_file_link` — exactly the
+metadata already available from the sync request and the Drive
+upload result; no image bytes or local file path (those stay
+on-device only).
+
+**Re-syncing the same visit_id upserts, not duplicates**: its `pm_visits`
+row is updated in place and its `pm_photos` rows are replaced, mirroring
+the Drive-level idempotency (`duplicate: true`) that already existed.
+A failed `record_synced_visit` call (e.g. a bad `pop_id`) is reported
+to the app as a clean `"failed"` sync response, the same shape as a
+Drive failure — even though the photos are already on Drive at that
+point; nothing here can mark local evidence for deletion either way.
+
+## District / Engineer / POP-wise Dashboard
+
+Implementation: `backend/app/services/compliance.py`,
+`backend/app/api/v1/endpoints/dashboard.py`. All three endpoints
+require a logged-in employee (`get_current_employee`, same as
+`/locations/*`) and read only the `PmVisit`/`PmPhoto` rows above —
+there is no mobile-app UI for this yet (a web admin dashboard remains
+a later phase per the top-level README); this module is the data API
+it will eventually call.
+
+- **`GET /api/v1/dashboard/districts?date=YYYY-MM-DD`** — for each
+  District, how many of its *active* POPs received at least one
+  **fully compliant** visit (see below) in the fortnight containing
+  `date` (defaults to today), and the resulting compliance %.
+- **`GET /api/v1/dashboard/engineers?date=YYYY-MM-DD`** — for each
+  active Employee, how many visits they synced in that fortnight, and
+  how many were fully compliant. Every active employee is listed,
+  including zero-visit ones.
+- **`GET /api/v1/dashboard/pops/{pop_id}/visits`** — every synced visit
+  for one POP, most recent first. Not windowed to a fortnight.
+
+**"Fully compliant" means all 5 mandatory categories were actually
+persisted for that visit** (`PmPhoto.category` covers
+`MANDATORY_PHOTO_CATEGORIES`, `app/models/pm_photo.py`) — computed from
+what was actually synced, not merely that a sync happened. The sync
+endpoint itself does not enforce category completeness (that
+validation lives in the mobile app, `PmVisitController.
+allPhotosValidForSubmission`); this is **not** geofence validation and
+never involves a POP coordinate, consistent with every other module.
+
+**Fortnight definition — resolves Open Decision #4 below**: calendar
+fortnights, the 1st–15th and the 16th–end-of-month, chosen over a
+rolling 14-day window because it needs no "since when" reference point
+or per-POP/per-employee state to track. `fortnight_bounds()` in
+`compliance.py` is the single place this is computed; revisit there if
+a rolling window turns out to be what's actually needed.
+
+**Known scale limitation**: compliance aggregation queries every
+`PmVisit` row and filters/groups in Python rather than in SQL. This is
+correct and simple at this project's current scale (one row per
+successfully synced visit, no production data yet) but would need
+revisiting — an indexed/SQL-side date filter — before a large volume
+of visits makes an in-Python scan too slow.
+
+**Monthly MIS / Excel export is a separate, not-yet-built module** —
+only the JSON dashboard data API above exists; no tabular export
+exists yet.
 
 ## Open Decisions (to confirm before further backend implementation)
 
-1. UUID vs integer primary keys — **resolved for the implemented tables**
-   (District/Block/GP/POP/Employee all use integer PKs); still open for
-   `PMVisit`/`PMPhoto`.
+1. UUID vs integer primary keys — **resolved**: District/Block/GP/POP/
+   Employee all use integer PKs; the backend `PmVisit.id` uses the
+   client-generated string id as-is instead (see "Backend PmVisit /
+   PmPhoto" above) — a deliberate exception, not an oversight.
 2. Whether `district_id`/`block_id` are denormalized onto `POP` —
-   **resolved: no**, resolved via joins (see POP section above). Still
-   open for `PMVisit`.
+   **resolved: no**, resolved via joins (see POP section above). The
+   same resolution now also applies to the backend `PmVisit` table —
+   see "Backend PmVisit / PmPhoto" above.
 3. Exact enum values for `sync_status` — **resolved**: `VisitSyncStatus`
    (`draft`/`inProgress`/`readyForSubmission`/`pendingSync`/`syncing`/
    `synced`/`submitted`/`syncFailed`), see "Offline Storage &
@@ -439,12 +534,12 @@ export planned for a later phase:
    to `uploaded`/`failed` per-photo yet, only the visit-level status
    reflects a sync attempt's outcome. (`role` was dropped — see
    Employee section above.)
-4. Definition of a "fortnight period" (calendar-based 1–15/16–end, or
-   rolling 14-day windows from first visit).
+4. Definition of a "fortnight period" — **resolved**: calendar-based
+   1st–15th / 16th–end-of-month — see "District / Engineer / POP-wise
+   Dashboard" above.
 5. **When official POP latitude/longitude data arrives**: how it's
    imported/validated, and the exact geofence radius policy (fixed
    default vs per-POP).
-6. How a device-generated `pm_visits.id` (see #8) reconciles with a
-   future backend `PMVisit.id` once sync/submission is implemented
-   (e.g. client-generated UUID accepted as-is vs. server-assigned ID
-   returned on first sync).
+6. How a device-generated `pm_visits.id` reconciles with the backend
+   `PmVisit.id` — **resolved**: accepted as-is, no separate
+   server-assigned id — see "Backend PmVisit / PmPhoto" above.

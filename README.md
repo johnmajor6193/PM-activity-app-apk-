@@ -21,8 +21,8 @@ The system has two main components:
    - Stores District/Block/GP/POP master data
    - Stores PM visit records (GPS, timestamps, photo metadata, Google Drive
      links)
-   - Will later expose dashboards (district-wise, engineer-wise, POP-wise)
-     and Monthly MIS / Excel export
+   - Exposes district-wise/engineer-wise/POP-wise compliance dashboard data
+     (JSON API only, no UI yet); Monthly MIS / Excel export is still planned
 
 A web admin dashboard will be added in a later phase once the mobile app and
 backend are functional.
@@ -147,7 +147,18 @@ resubmitting an already-submitted visit never triggers a second upload
 — see `docs/data-model.md` ("PM Visit Submission and Validation") for
 the full lifecycle and validation rules.
 
-No geofencing, dashboard, or MIS has been implemented yet. See
+**District/Engineer/POP-wise Dashboard is implemented (backend data API
+only).** `GET /api/v1/dashboard/districts`, `/engineers`, and
+`/pops/{pop_id}/visits` report fortnightly compliance — a POP/engineer
+is "compliant" only if all 5 mandatory categories were actually synced
+for a visit, computed from a minimal `PmVisit`/`PmPhoto` record the
+backend now persists on a successful Drive sync (see
+`docs/data-model.md`, "Backend PmVisit / PmPhoto"). Protected by the
+same JWT check as `/locations/*`. There is no web UI or mobile screen
+for this yet, and no Excel/MIS export — see `backend/README.md`
+("Dashboard") for the endpoints and the fortnight definition chosen.
+
+No geofencing or MIS export has been implemented yet. See
 `mobile_app/README.md` and `backend/README.md` for details and how to
 run each part.
 
@@ -158,6 +169,6 @@ generated for real with `flutter create .` (Flutter 3.50.0 / Dart
 `ACCESS_NETWORK_STATE`) are set in its manifest. `flutter pub get`,
 `flutter analyze` (0 errors/warnings), and `flutter test` (56/56
 passing) have all been run and verified, alongside the backend's own
-`pytest` suite (31/31 passing) — see `mobile_app/README.md` and
+`pytest` suite (66/66 passing) — see `mobile_app/README.md` and
 `backend/README.md` for exact commands and which tests are genuinely
 real versus fake-backed.

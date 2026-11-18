@@ -41,11 +41,11 @@ _MANDATORY_CATEGORIES = [
 ]
 
 
-def _visit_metadata(visit_id: str = "visit-1") -> dict:
+def _visit_metadata(visit_id: str = "visit-1", pop_id: int = 7) -> dict:
     return {
         "visit_id": visit_id,
         "employee_id": "ENG001",
-        "pop_id": 7,
+        "pop_id": pop_id,
         "pop_code": "POP-00125",
         "district": "Chennai",
         "block": "Sholinganallur",
@@ -91,11 +91,11 @@ def _clear_drive_override() -> None:
     app.dependency_overrides.pop(get_drive_upload_service, None)
 
 
-def test_successful_upload_of_all_five_photos(client, auth_headers):
+def test_successful_upload_of_all_five_photos(client, auth_headers, seeded_pop_id):
     fake = FakeDriveUploadService()
     _use_fake_drive_service(fake)
     try:
-        visit = _visit_metadata()
+        visit = _visit_metadata(pop_id=seeded_pop_id)
         response = _post_sync(
             client, visit["visit_id"], visit, _MANDATORY_CATEGORIES, headers=auth_headers
         )
@@ -111,11 +111,68 @@ def test_successful_upload_of_all_five_photos(client, auth_headers):
         _clear_drive_override()
 
 
-def test_upload_failure_is_reported_as_a_clean_failed_response(client, auth_headers):
+def test_successful_sync_persists_a_pm_visit_record_for_the_dashboard(
+    client, auth_headers, seeded_pop_id, db_session
+):
+    """Foundation for the District/Engineer/POP-wise dashboard (see
+    app/services/pm_visits.py, app/services/compliance.py): a
+    successful sync must leave a PmVisit row with all 5 PmPhoto rows,
+    or there is nothing for the dashboard to aggregate."""
+    from app.models.pm_photo import PmPhoto
+    from app.models.pm_visit import PmVisit
+
+    fake = FakeDriveUploadService()
+    _use_fake_drive_service(fake)
+    try:
+        visit = _visit_metadata(visit_id="visit-persist-1", pop_id=seeded_pop_id)
+        response = _post_sync(
+            client, visit["visit_id"], visit, _MANDATORY_CATEGORIES, headers=auth_headers
+        )
+        assert response.json()["status"] == "synced"
+
+        persisted = db_session.get(PmVisit, "visit-persist-1")
+        assert persisted is not None
+        assert persisted.pop_id == seeded_pop_id
+        assert persisted.visit_date == "2026-11-17"
+
+        photos = (
+            db_session.query(PmPhoto).filter(PmPhoto.visit_id == "visit-persist-1").all()
+        )
+        assert {p.category for p in photos} == set(_MANDATORY_CATEGORIES)
+        assert all(p.drive_file_id for p in photos)
+    finally:
+        _clear_drive_override()
+
+
+def test_resyncing_the_same_visit_updates_rather_than_duplicates_the_persisted_record(
+    client, auth_headers, seeded_pop_id, db_session
+):
+    from app.models.pm_photo import PmPhoto
+    from app.models.pm_visit import PmVisit
+
+    fake = FakeDriveUploadService()
+    _use_fake_drive_service(fake)
+    try:
+        visit = _visit_metadata(visit_id="visit-persist-2", pop_id=seeded_pop_id)
+        _post_sync(client, visit["visit_id"], visit, _MANDATORY_CATEGORIES, headers=auth_headers)
+        _post_sync(client, visit["visit_id"], visit, _MANDATORY_CATEGORIES, headers=auth_headers)
+
+        assert db_session.query(PmVisit).filter(PmVisit.id == "visit-persist-2").count() == 1
+        photos = (
+            db_session.query(PmPhoto).filter(PmPhoto.visit_id == "visit-persist-2").all()
+        )
+        assert len(photos) == 5  # not 10 - replaced, not appended
+    finally:
+        _clear_drive_override()
+
+
+def test_upload_failure_is_reported_as_a_clean_failed_response(
+    client, auth_headers, seeded_pop_id
+):
     fake = FakeDriveUploadService(fail=True)
     _use_fake_drive_service(fake)
     try:
-        visit = _visit_metadata()
+        visit = _visit_metadata(pop_id=seeded_pop_id)
         response = _post_sync(
             client, visit["visit_id"], visit, _MANDATORY_CATEGORIES, headers=auth_headers
         )
@@ -128,11 +185,35 @@ def test_upload_failure_is_reported_as_a_clean_failed_response(client, auth_head
         _clear_drive_override()
 
 
-def test_retry_after_failure_succeeds_once_the_service_recovers(client, auth_headers):
+def test_a_failed_drive_upload_persists_no_pm_visit_record(
+    client, auth_headers, seeded_pop_id, db_session
+):
+    """A PmVisit row must only ever exist for a visit that is actually
+    on Drive - never created speculatively before/regardless of the
+    Drive result."""
+    from app.models.pm_visit import PmVisit
+
     fake = FakeDriveUploadService(fail=True)
     _use_fake_drive_service(fake)
     try:
-        visit = _visit_metadata()
+        visit = _visit_metadata(visit_id="visit-never-persisted", pop_id=seeded_pop_id)
+        response = _post_sync(
+            client, visit["visit_id"], visit, _MANDATORY_CATEGORIES, headers=auth_headers
+        )
+
+        assert response.json()["status"] == "failed"
+        assert db_session.get(PmVisit, "visit-never-persisted") is None
+    finally:
+        _clear_drive_override()
+
+
+def test_retry_after_failure_succeeds_once_the_service_recovers(
+    client, auth_headers, seeded_pop_id
+):
+    fake = FakeDriveUploadService(fail=True)
+    _use_fake_drive_service(fake)
+    try:
+        visit = _visit_metadata(pop_id=seeded_pop_id)
         first = _post_sync(
             client, visit["visit_id"], visit, _MANDATORY_CATEGORIES, headers=auth_headers
         )
@@ -149,11 +230,13 @@ def test_retry_after_failure_succeeds_once_the_service_recovers(client, auth_hea
         _clear_drive_override()
 
 
-def test_resyncing_the_same_visit_does_not_create_duplicate_files(client, auth_headers):
+def test_resyncing_the_same_visit_does_not_create_duplicate_files(
+    client, auth_headers, seeded_pop_id
+):
     fake = FakeDriveUploadService()
     _use_fake_drive_service(fake)
     try:
-        visit = _visit_metadata()
+        visit = _visit_metadata(pop_id=seeded_pop_id)
         first = _post_sync(
             client, visit["visit_id"], visit, _MANDATORY_CATEGORIES, headers=auth_headers
         )
@@ -174,10 +257,10 @@ def test_resyncing_the_same_visit_does_not_create_duplicate_files(client, auth_h
         _clear_drive_override()
 
 
-def test_not_configured_drive_service_fails_clearly(client, auth_headers):
+def test_not_configured_drive_service_fails_clearly(client, auth_headers, seeded_pop_id):
     _use_fake_drive_service(NotConfiguredDriveUploadService())
     try:
-        visit = _visit_metadata()
+        visit = _visit_metadata(pop_id=seeded_pop_id)
         response = _post_sync(
             client, visit["visit_id"], visit, _MANDATORY_CATEGORIES, headers=auth_headers
         )
@@ -190,11 +273,13 @@ def test_not_configured_drive_service_fails_clearly(client, auth_headers):
         _clear_drive_override()
 
 
-def test_mismatched_visit_id_between_path_and_metadata_is_rejected(client, auth_headers):
+def test_mismatched_visit_id_between_path_and_metadata_is_rejected(
+    client, auth_headers, seeded_pop_id
+):
     fake = FakeDriveUploadService()
     _use_fake_drive_service(fake)
     try:
-        visit = _visit_metadata(visit_id="visit-1")
+        visit = _visit_metadata(visit_id="visit-1", pop_id=seeded_pop_id)
         response = _post_sync(
             client, "visit-DIFFERENT", visit, _MANDATORY_CATEGORIES, headers=auth_headers
         )
@@ -205,11 +290,11 @@ def test_mismatched_visit_id_between_path_and_metadata_is_rejected(client, auth_
         _clear_drive_override()
 
 
-def test_mismatched_photo_count_is_rejected(client, auth_headers):
+def test_mismatched_photo_count_is_rejected(client, auth_headers, seeded_pop_id):
     fake = FakeDriveUploadService()
     _use_fake_drive_service(fake)
     try:
-        visit = _visit_metadata()
+        visit = _visit_metadata(pop_id=seeded_pop_id)
         # 5 metadata entries but only 4 files - must be rejected before
         # ever reaching the Drive service.
         photos_metadata = [_photo_metadata(category) for category in _MANDATORY_CATEGORIES]
@@ -243,7 +328,7 @@ def test_visits_sync_rejects_anonymous_requests(client):
 
 
 def test_employee_id_sent_to_drive_comes_from_the_verified_jwt_not_the_request_body(
-    client, auth_headers
+    client, auth_headers, seeded_pop_id
 ):
     """The Flutter app's own `visit_metadata.employee_id` must never be
     trusted for identity - this proves the endpoint uses
@@ -252,7 +337,7 @@ def test_employee_id_sent_to_drive_comes_from_the_verified_jwt_not_the_request_b
     spy = _SpyDriveUploadService()
     _use_fake_drive_service(spy)
     try:
-        visit = _visit_metadata()
+        visit = _visit_metadata(pop_id=seeded_pop_id)
         visit["employee_id"] = "SPOOFED-EMPLOYEE-ID"  # auth_headers is logged in as ENG001
 
         response = _post_sync(
