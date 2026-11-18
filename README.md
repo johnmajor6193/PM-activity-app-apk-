@@ -13,8 +13,8 @@ The system has two main components:
    - Select District → Block → GP → POP
    - Capture 5 mandatory live photographs per visit (POP Rack, UPS & Battery,
      Busbar, Earth Pit Chamber, Earth Pit Open with Rod)
-   - Capture GPS location + accuracy for every photo, validated against the
-     POP's geofence
+   - Capture GPS location + accuracy for every photo (no geofence
+     validation — see "Current Status" below)
    - Work fully offline and sync later
 2. **`backend/`** — Python FastAPI service that:
    - Authenticates engineers
@@ -121,16 +121,34 @@ still needs to provide. **No real Google Drive account has been used
 to test this** — see the top-level report for exactly what was and
 wasn't verified.
 
-No geofencing, dashboard, MIS, or final visit submission has been
-implemented yet. See `mobile_app/README.md` and `backend/README.md`
-for details and how to run each part.
+**PM Visit Submission and Validation is implemented.** The visit
+lifecycle now runs Draft → In Progress → Ready for Submission →
+Pending Sync → Syncing → Synced → Submitted (with a Sync Failed branch,
+retry-safe). A new Review & Submit screen shows the employee/location
+summary, a ✓/✗ checklist of all 5 mandatory photos (with a thumbnail
+and full-size preview of each), and the live sync status; Submit is
+disabled unless every mandatory photo exists and is valid (category,
+timestamp, plausible GPS, original path, watermarked path — **not**
+geofence validation, and **not** checked against any POP coordinate,
+which still doesn't exist). Submission reuses the existing
+`SyncManager`/`GoogleDriveUploadService` pipeline unchanged — no second
+upload path was created. Offline submission queues the visit as
+Pending Sync; a failed Drive upload marks it Sync Failed with a visible
+Retry action and never deletes local evidence; a rapid double-tap or
+resubmitting an already-submitted visit never triggers a second upload
+— see `docs/data-model.md` ("PM Visit Submission and Validation") for
+the full lifecycle and validation rules.
+
+No geofencing, dashboard, or MIS has been implemented yet. See
+`mobile_app/README.md` and `backend/README.md` for details and how to
+run each part.
 
 **The Flutter Android project exists.** `mobile_app/android/` was
 generated for real with `flutter create .` (Flutter 3.50.0 / Dart
 3.14.0), not hand-written, and the required Android permissions
 (`CAMERA`, `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`,
 `ACCESS_NETWORK_STATE`) are set in its manifest. `flutter pub get`,
-`flutter analyze` (0 errors/warnings), and `flutter test` (50/50
+`flutter analyze` (0 errors/warnings), and `flutter test` (56/56
 passing) have all been run and verified, alongside the backend's own
 `pytest` suite (31/31 passing) — see `mobile_app/README.md` and
 `backend/README.md` for exact commands and which tests are genuinely

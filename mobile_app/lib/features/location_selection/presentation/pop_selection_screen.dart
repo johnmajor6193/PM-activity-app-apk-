@@ -15,11 +15,15 @@ import 'pop_selection_controller.dart';
 /// PopDetail), and no fake coordinates are used. GPS capture and
 /// geofence validation belong to the later PM visit/photo module.
 class PopSelectionScreen extends StatefulWidget {
-  const PopSelectionScreen({super.key, required this.employeeId});
+  const PopSelectionScreen({super.key, required this.employeeId, required this.employeeName});
 
   /// Forwarded to PmVisitScreen so every PM visit record stores which
   /// employee performed it.
   final String employeeId;
+
+  /// Display-only; forwarded to PmVisitScreen -> PmVisitSubmissionScreen
+  /// for the submission summary. Not persisted in the PmVisit record.
+  final String employeeName;
 
   @override
   State<PopSelectionScreen> createState() => _PopSelectionScreenState();
@@ -175,6 +179,7 @@ class _PopSelectionScreenState extends State<PopSelectionScreen> {
                   MaterialPageRoute(
                     builder: (_) => PmVisitScreen(
                       employeeId: widget.employeeId,
+                      employeeName: widget.employeeName,
                       popId: detail.id,
                       popCode: detail.popCode,
                       districtName: detail.districtName,

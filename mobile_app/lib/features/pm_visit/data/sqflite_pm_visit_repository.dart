@@ -52,13 +52,16 @@ class SqflitePmVisitRepository implements PmVisitRepository {
     return visit;
   }
 
+  static const _resumableStatuses = [VisitSyncStatus.draft, VisitSyncStatus.inProgress];
+
   @override
   Future<PmVisit?> getResumableVisit(int popId) async {
     final db = await _database.database;
+    final placeholders = List.filled(_resumableStatuses.length, '?').join(', ');
     final rows = await db.query(
       'pm_visits',
-      where: 'pop_id = ? AND status = ?',
-      whereArgs: [popId, VisitSyncStatus.localOnly.name],
+      where: 'pop_id = ? AND status IN ($placeholders)',
+      whereArgs: [popId, ..._resumableStatuses.map((status) => status.name)],
       orderBy: 'started_at DESC',
       limit: 1,
     );

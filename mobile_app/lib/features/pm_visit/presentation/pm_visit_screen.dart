@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../domain/entities/photo_category.dart';
 import '../domain/entities/visit_sync_status.dart';
 import 'pm_visit_controller.dart';
+import 'pm_visit_submission_screen.dart';
 
 /// "Start PM Visit" screen for a selected POP: a checklist of the 5
 /// mandatory photo categories. Each is captured with the device camera
@@ -12,18 +13,20 @@ import 'pm_visit_controller.dart';
 /// — the review preview shows the watermarked evidence photo, not the
 /// plain original — before counting as Completed.
 ///
-/// Reopening this screen for a POP with an incomplete visit resumes
-/// that visit (see PmVisitController.startVisit) rather than starting a
-/// new one, so closing the app mid-capture never loses progress.
+/// Reopening this screen for a POP with an incomplete (draft or
+/// in-progress) visit resumes it (see PmVisitController.startVisit)
+/// rather than starting a new one, so closing the app mid-capture never
+/// loses progress.
 ///
-/// Once all 5 categories are Completed, the visit becomes Pending Sync
-/// automatically (fully offline). "Sync Now" then attempts a real sync
-/// attempt through the (currently placeholder) sync pipeline — see
-/// SyncManager — rather than a fake success message.
+/// Once all 5 categories are Completed, the visit becomes Ready for
+/// Submission automatically (fully offline, no network call), and
+/// "Review & Submit" opens [PmVisitSubmissionScreen] — the actual
+/// submission/sync action lives there, not on this screen.
 class PmVisitScreen extends StatefulWidget {
   const PmVisitScreen({
     super.key,
     required this.employeeId,
+    required this.employeeName,
     required this.popId,
     required this.popCode,
     required this.districtName,
@@ -32,6 +35,7 @@ class PmVisitScreen extends StatefulWidget {
   });
 
   final String employeeId;
+  final String employeeName;
   final int popId;
   final String popCode;
   final String districtName;
@@ -131,7 +135,7 @@ class _PmVisitScreenState extends State<PmVisitScreen> {
           Icon(Icons.circle, size: 10, color: _statusColor(status)),
           const SizedBox(width: 8),
           Text(
-            'Visit status: ${_statusLabel(status)}',
+            'Visit status: ${status.label}',
             style: TextStyle(color: _statusColor(status), fontWeight: FontWeight.w600),
           ),
         ],
@@ -167,47 +171,41 @@ class _PmVisitScreenState extends State<PmVisitScreen> {
   }
 
   Widget _buildActionButton() {
-    final allDone = _controller.allPhotosCompleted;
-    final isSyncing = _controller.isSyncing;
+    final allDone = _controller.allPhotosValidForSubmission;
     return FilledButton(
-      onPressed: !allDone || isSyncing ? null : () => _controller.attemptSyncNow(),
-      child: isSyncing
-          ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
-          : Text(
-              allDone
-                  ? 'Sync Now'
-                  : 'Sync Now (${_controller.photosByCategory.length}/5 completed)',
-            ),
+      onPressed: !allDone ? null : _openSubmissionScreen,
+      child: Text(
+        allDone ? 'Review & Submit' : 'Review & Submit (${_controller.photosByCategory.length}/5 completed)',
+      ),
+    );
+  }
+
+  void _openSubmissionScreen() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PmVisitSubmissionScreen(
+          controller: _controller,
+          employeeName: widget.employeeName,
+        ),
+      ),
     );
   }
 
   Color _statusColor(VisitSyncStatus status) {
     switch (status) {
-      case VisitSyncStatus.localOnly:
+      case VisitSyncStatus.draft:
+      case VisitSyncStatus.inProgress:
         return Colors.grey.shade700;
+      case VisitSyncStatus.readyForSubmission:
       case VisitSyncStatus.pendingSync:
         return Colors.orange.shade800;
       case VisitSyncStatus.syncing:
         return Colors.blue.shade700;
       case VisitSyncStatus.synced:
+      case VisitSyncStatus.submitted:
         return Colors.green.shade700;
       case VisitSyncStatus.syncFailed:
         return Colors.red.shade700;
-    }
-  }
-
-  String _statusLabel(VisitSyncStatus status) {
-    switch (status) {
-      case VisitSyncStatus.localOnly:
-        return 'Local Only';
-      case VisitSyncStatus.pendingSync:
-        return 'Pending Sync';
-      case VisitSyncStatus.syncing:
-        return 'Syncing…';
-      case VisitSyncStatus.synced:
-        return 'Synced';
-      case VisitSyncStatus.syncFailed:
-        return 'Sync Failed — will retry';
     }
   }
 }

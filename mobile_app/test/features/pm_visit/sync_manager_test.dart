@@ -171,7 +171,7 @@ void main() {
   test('getVisitsEligibleForSync returns PENDING_SYNC and SYNC_FAILED visits only', () async {
     repository.seed(buildVisit(id: 'pending', status: VisitSyncStatus.pendingSync));
     repository.seed(buildVisit(id: 'failed', status: VisitSyncStatus.syncFailed));
-    repository.seed(buildVisit(id: 'local', status: VisitSyncStatus.localOnly));
+    repository.seed(buildVisit(id: 'local', status: VisitSyncStatus.draft));
     repository.seed(buildVisit(id: 'synced', status: VisitSyncStatus.synced));
 
     final eligible = await syncManager.getVisitsEligibleForSync();

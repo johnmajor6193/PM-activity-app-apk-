@@ -68,7 +68,7 @@ void main() {
     expect(visit.districtName, 'Chennai');
     expect(visit.blockName, 'Sholinganallur');
     expect(visit.gpName, 'Semmancheri GP');
-    expect(visit.status, VisitSyncStatus.localOnly);
+    expect(visit.status, VisitSyncStatus.draft);
   });
 
   test('reopening/retrieving a pending visit returns everything stored for it', () async {
@@ -111,7 +111,7 @@ void main() {
     expect(resumable!.id, visit.id);
   });
 
-  test('getResumableVisit returns null once the visit is no longer LOCAL_ONLY', () async {
+  test('getResumableVisit returns null once the visit is no longer draft/in-progress', () async {
     final visit = await repository.startVisit(
       employeeId: 'ENG001',
       popId: 7,
@@ -209,7 +209,7 @@ void main() {
     );
     await repository.updateVisitStatus(pending.id, VisitSyncStatus.pendingSync);
     await repository.updateVisitStatus(failed.id, VisitSyncStatus.syncFailed);
-    // stillLocal is left as LOCAL_ONLY on purpose.
+    // stillLocal is left as draft on purpose.
 
     final eligible = await repository.getVisitsByStatus([
       VisitSyncStatus.pendingSync,

@@ -1,12 +1,14 @@
 import 'visit_sync_status.dart';
 
-/// A single fortnightly PM visit to one POP, in progress (or completed
-/// and pending sync) on this device.
+/// A single fortnightly PM visit to one POP, moving through its full
+/// lifecycle on this device — see VisitSyncStatus for the state
+/// machine (draft -> ... -> submitted, or -> syncFailed).
 ///
-/// Submission to a backend is not implemented yet. Google Drive upload
-/// is not implemented yet either — [status] models the offline-first
-/// sync lifecycle so that whichever is built first can use it without a
-/// schema change; see VisitSyncStatus and SyncManager.
+/// Submission to a backend visit-record table is not implemented;
+/// "submission" here means the local lifecycle (requirement: the
+/// engineer explicitly submits once ready) that triggers the existing
+/// Google Drive sync — see PmVisitController.submitVisit and
+/// SyncManager, both otherwise unchanged by this.
 class PmVisit {
   const PmVisit({
     required this.id,
@@ -17,7 +19,7 @@ class PmVisit {
     required this.blockName,
     required this.gpName,
     required this.startedAt,
-    this.status = VisitSyncStatus.localOnly,
+    this.status = VisitSyncStatus.draft,
   });
 
   /// Locally-generated identifier (not a backend ID — there is no
@@ -32,8 +34,8 @@ class PmVisit {
   final DateTime startedAt;
   final VisitSyncStatus status;
 
-  /// Returns a copy with [status] replaced. Used when all 5 photos are
-  /// confirmed (-> pendingSync) or by the sync engine.
+  /// Returns a copy with [status] replaced. Used as photos are
+  /// confirmed, when the engineer submits, and by the sync engine.
   PmVisit copyWithStatus(VisitSyncStatus status) {
     return PmVisit(
       id: id,

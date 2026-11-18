@@ -219,20 +219,26 @@ capturing all 5 photos, GPS, and the watermark all happen with zero
 network calls, and everything lands in the `pm_visits`/`pm_photos`
 tables above — nothing is held only in memory. Closing and reopening
 the app does not lose a visit: `PmVisitController.startVisit` looks for
-an incomplete (LOCAL_ONLY) visit for the same POP via
+an incomplete (`draft` or `inProgress`) visit for the same POP via
 `PmVisitRepository.getResumableVisit` and continues it, rather than
 starting a duplicate.
 
 **`pm_visits.status` — `VisitSyncStatus`** (implementation:
-`mobile_app/lib/features/pm_visit/domain/entities/visit_sync_status.dart`):
+`mobile_app/lib/features/pm_visit/domain/entities/visit_sync_status.dart`).
+This is the visit's full lifecycle, from first capture through a
+confirmed Google Drive upload — see "PM Visit Submission and
+Validation" below for how `readyForSubmission` onward is driven:
 
 | Value | Meaning |
 |---|---|
-| `localOnly` | Visit started; photos still being captured. Nothing to sync yet. |
-| `pendingSync` | All 5 mandatory photos confirmed. Set automatically, offline, the moment the 5th is confirmed — no button press, no network call. |
+| `draft` | Visit started; no photo confirmed yet. |
+| `inProgress` | At least one, but not all 5, mandatory photos confirmed. |
+| `readyForSubmission` | All 5 mandatory photos confirmed and valid. Set automatically, offline, the moment the 5th is confirmed — no button press, no network call. The engineer may now open Review & Submit. |
+| `pendingSync` | The engineer tapped Submit (or Retry); queued for upload. Also the state a visit is left in if Submit was tapped with no internet connection. |
 | `syncing` | A sync attempt is in progress right now. |
-| `synced` | Sync completed successfully. **Not reachable yet** — see below. |
-| `syncFailed` | The most recent sync attempt failed. The visit and its photos are **never** deleted for this; it stays eligible for retry. |
+| `synced` | Upload to Google Drive succeeded. Transient — `PmVisitController.submitVisit` immediately advances it to `submitted`. |
+| `submitted` | Terminal success state. The visit is fully synced and complete; submitting again is a no-op (duplicate-submission guard). |
+| `syncFailed` | The most recent sync attempt failed. The visit and its photos are **never** deleted for this; it stays eligible for retry via Submit/Retry. |
 
 **`SyncManager`** (`mobile_app/lib/features/pm_visit/data/sync_manager.dart`)
 is the queue: `getVisitsEligibleForSync()` returns visits in
@@ -261,6 +267,55 @@ Photo Capture module) is intentionally left alone by this module — it
 stays `pending` for every photo; only the backend's response (via
 `GoogleDriveUploadService`) and `SyncManager`'s visit-level `status`
 reflect whether the upload actually happened.
+
+### PM Visit Submission and Validation
+
+Implementation: `mobile_app/lib/features/pm_visit/presentation/pm_visit_controller.dart`
+(`submitVisit`) and `pm_visit_submission_screen.dart` (the Review &
+Submit screen). This module adds the engineer-facing submission step
+and its validation gate on top of the existing capture/offline-storage/
+sync foundation above — it does not change `SyncManager`, the Google
+Drive pipeline, or the capture flow.
+
+**Validation gate.** `submitVisit()` refuses to run unless
+`PmVisitController.allPhotosValidForSubmission` is true: every one of
+the 5 mandatory categories has a confirmed photo, and that photo is
+itself valid per `PmPhotoRecordValidation.isValidForSubmission`
+(non-empty original path, non-empty watermarked path, and a plausible
+GPS fix — see `GpsReadingValidation.isPlausible`). This is a basic
+sanity check on the GPS values themselves (not NaN, latitude in
+[-90, 90], longitude in [-180, 180], non-negative accuracy) — **it is
+not geofence validation and never compares against a POP coordinate**,
+since no POP latitude/longitude master data exists (see "POP
+Geo-Coordinates — Deferred" above). In normal operation every confirmed
+photo already satisfies this; the check mainly guards against
+corrupted or legacy rows.
+
+**Submission screen contents** (`PmVisitSubmissionScreen`): Employee
+ID/name, District, Block, GP, POP ID, visit date/time, a checklist of
+all 5 mandatory categories (✓/✗ per category, with a thumbnail of the
+watermarked evidence photo, tappable for a full preview), and the
+current `VisitSyncStatus`. The Submit (or Retry, when `syncFailed`)
+button is enabled only when `PmVisitController.canSubmit` is true.
+
+**Duplicate-submission protection and idempotency.** `submitVisit()`
+sets `isSyncing = true` synchronously, before its first `await`, and
+returns immediately if already `isSyncing` or if the visit's status
+isn't `readyForSubmission`/`syncFailed` — so a rapid double-tap, or
+calling Submit again after `submitted`, never issues a second upload.
+Retrying after a failure is safe because `SyncManager` never deletes or
+modifies local data on a failed or skipped attempt; a retry simply
+repeats the same sync call.
+
+**Offline submission.** Tapping Submit with no connection moves the
+visit to `pendingSync` (so it is queued) and `SyncManager.syncVisit`
+then reports `skippedNoConnection`, leaving the status at `pendingSync`
+with a message explaining why — nothing is lost, and the next Submit/
+Retry (or a background `trySyncPendingVisits` call) picks it up.
+
+**What is explicitly not implemented here**: geofence validation,
+dashboards, MIS reports, analytics, new authentication, and new photo
+categories — all out of scope for this module.
 
 ## Google Drive Upload
 
@@ -328,13 +383,13 @@ top of.
 Employee ID, POP ID, District, Block, GP, category, capture timestamp,
 latitude, longitude, GPS accuracy.
 
-**Expected state flow** (`VisitSyncStatus`, unchanged from "Offline
-Storage & Synchronization" above — this module implements what makes
-`synced` reachable, it doesn't change the state machine itself):
+**Expected state flow** (`VisitSyncStatus` — unchanged `SyncManager`
+mechanics; see "PM Visit Submission and Validation" above for how a
+visit reaches `PENDING_SYNC` and for the `SYNCED` → `SUBMITTED` step):
 
 ```
-PENDING_SYNC → SYNCING → SYNCED           (upload succeeds)
-PENDING_SYNC → SYNCING → SYNC_FAILED      (upload fails; retry later, nothing local is touched)
+PENDING_SYNC → SYNCING → SYNCED → SUBMITTED   (upload succeeds)
+PENDING_SYNC → SYNCING → SYNC_FAILED          (upload fails; retry later, nothing local is touched)
 ```
 
 **Required configuration (from the company, not yet provided in this
@@ -376,8 +431,10 @@ export planned for a later phase:
    **resolved: no**, resolved via joins (see POP section above). Still
    open for `PMVisit`.
 3. Exact enum values for `sync_status` — **resolved**: `VisitSyncStatus`
-   (`localOnly`/`pendingSync`/`syncing`/`synced`/`syncFailed`), see
-   "Offline Storage & Synchronization". Per-photo `upload_status`
+   (`draft`/`inProgress`/`readyForSubmission`/`pendingSync`/`syncing`/
+   `synced`/`submitted`/`syncFailed`), see "Offline Storage &
+   Synchronization" and "PM Visit Submission and Validation". Per-photo
+   `upload_status`
    remains open — it's still always `pending` today; nothing sets it
    to `uploaded`/`failed` per-photo yet, only the visit-level status
    reflects a sync attempt's outcome. (`role` was dropped — see

@@ -25,10 +25,10 @@ lib/
 │   │   ├── data/              # LocationApiClient, LocationRepositoryImpl
 │   │   ├── domain/            # LocationRepository interface, District/Block/Gp/PopSummary/PopDetail
 │   │   └── presentation/      # PopSelectionController, PopSelectionScreen
-│   ├── pm_visit/             # 5 mandatory photos, per-photo GPS, GPS watermark, offline storage + sync + Google Drive upload (implemented; no geofence yet)
+│   ├── pm_visit/             # 5 mandatory photos, per-photo GPS, GPS watermark, offline storage + sync + Google Drive upload + submission/validation (implemented; no geofence yet)
 │   │   ├── data/              # Camera/Location/Watermark/Connectivity services, SyncManager, GoogleDriveUploadService (calls the backend), NotImplementedDriveUploadService, local_database.dart (sqflite), SqflitePmVisitRepository
-│   │   ├── domain/            # PmVisitRepository + DriveUploadService interfaces, PmVisit/PmPhotoRecord/GpsReading/PhotoCategory/VisitSyncStatus
-│   │   └── presentation/      # PmVisitController, PmVisitScreen
+│   │   ├── domain/            # PmVisitRepository + DriveUploadService interfaces, PmVisit/PmPhotoRecord/GpsReading/PhotoCategory/VisitSyncStatus (+ GpsReadingValidation/PmPhotoRecordValidation extensions)
+│   │   └── presentation/      # PmVisitController (submitVisit), PmVisitScreen, PmVisitSubmissionScreen (Review & Submit)
 │   ├── sync/                 # reserved (e.g. background/scheduled sync) - the sync queue, state model, and Drive upload all ended up living in pm_visit/ instead, see above
 │   └── dashboard/            # POP visit history (device-local views)
 └── shared/
@@ -125,14 +125,14 @@ shown as Completed.
 
 **Offline Storage & Synchronization (foundation) is implemented.** The
 moment the 5th photo is confirmed — offline, no button, no network
-call — the visit's status becomes **Pending Sync** automatically
-(`VisitSyncStatus`: `localOnly` → `pendingSync` → `syncing` →
-`synced`/`syncFailed`; see `docs/data-model.md`). A status banner on
-`PmVisitScreen` always shows the current one. Once complete, the
-button changes to **"Sync Now"**, which checks connectivity first
-(`ConnectivityService`, via `connectivity_plus` — no connection means
-nothing is attempted, the visit stays Pending Sync, and the engineer
-is told so), then attempts a real sync through `SyncManager`.
+call — the visit's status becomes **Ready for Submission**
+automatically (`VisitSyncStatus`: `draft` → `inProgress` →
+`readyForSubmission` → `pendingSync` → `syncing` →
+`synced`/`syncFailed` → `submitted`; see `docs/data-model.md`). A
+status banner on `PmVisitScreen` always shows the current one. Once
+complete, the button changes to **"Review & Submit"**, which opens
+`PmVisitSubmissionScreen` — see "PM Visit Submission and Validation"
+below for what happens there.
 
 **Google Drive Upload is implemented — via the backend, never
 directly from this app.** `GoogleDriveUploadService` (the default
@@ -154,8 +154,34 @@ with no backend reachable at all) — it just isn't the default anymore.
 
 A failed (or skipped, for no connection) sync attempt **never deletes
 or modifies any local photo or visit data** — only the `status` column
-changes — so the visit remains fully intact and "Sync Now" can be
-tapped again later to retry, exactly the same way.
+changes — so the visit remains fully intact and Submit/Retry can be
+tapped again later, exactly the same way.
+
+**PM Visit Submission and Validation is implemented.**
+`PmVisitSubmissionScreen` ("Review & Submit") shows Employee ID/name,
+District, Block, GP, POP ID, visit date/time, a ✓/✗ checklist of all 5
+mandatory categories (each with a thumbnail of the watermarked evidence
+photo, tappable for a full preview), and the current sync status. The
+**Submit** button (relabeled **Retry Submission** after a failure) is
+only enabled when every mandatory photo exists and is valid — category,
+timestamp, a plausible GPS fix, the original path, and the watermarked
+path (`PmPhotoRecordValidation.isValidForSubmission`,
+`GpsReadingValidation.isPlausible`). This is a basic sanity check on the
+GPS values themselves, **not** geofence validation — it never compares
+against a POP coordinate, since POP coordinates still don't exist.
+
+Tapping Submit calls `PmVisitController.submitVisit()`, which drives
+the visit through `readyForSubmission` → `pendingSync` → `syncing` →
+`synced` → `submitted` (or `syncFailed`) using the **existing, unchanged**
+`SyncManager`/`GoogleDriveUploadService` pipeline — no second upload
+implementation was created. No connection at submit time leaves the
+visit `pendingSync` with an explanatory message, retained fully
+locally, to synchronize later. A failed Drive upload marks it
+`syncFailed` with a visible Retry action, never deleting local
+evidence. A guard set synchronously before the first `await` blocks a
+rapid double-tap or a resubmit of an already-`submitted` visit from
+ever triggering a second Drive upload — see `docs/data-model.md` ("PM
+Visit Submission and Validation") for the full lifecycle and test list.
 
 No geofencing, dashboard, or MIS exists yet.
 
@@ -269,7 +295,7 @@ upload success/failure/retry/idempotency), which also use a fake
 Every other test file fakes the camera/GPS boundaries specifically,
 because `image_picker` and `geolocator` do need a real device/emulator.
 
-`flutter analyze` reports 7 **informational** (not warning/error) notices
+`flutter analyze` reports 8 **informational** (not warning/error) notices
 that `package:flutter/material.dart` is deprecated in favor of a new
 `package:material_ui/material_ui.dart` (a very recent, still-external
 pub.dev package introduced after Flutter 3.47 — not bundled with the

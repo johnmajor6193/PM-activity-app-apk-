@@ -67,10 +67,12 @@ class _FakeRepository implements PmVisitRepository {
     return visit;
   }
 
+  static const _resumableStatuses = [VisitSyncStatus.draft, VisitSyncStatus.inProgress];
+
   @override
   Future<PmVisit?> getResumableVisit(int popId) async {
     for (final visit in _visits.values) {
-      if (visit.popId == popId && visit.status == VisitSyncStatus.localOnly) {
+      if (visit.popId == popId && _resumableStatuses.contains(visit.status)) {
         return visit;
       }
     }
@@ -186,9 +188,11 @@ class _FakeConnectivityService extends ConnectivityService {
 /// working" without needing real Google Drive access.
 class _FakeDriveUploadService implements DriveUploadService {
   bool shouldFail = true;
+  int callCount = 0;
 
   @override
   Future<void> uploadVisit(PmVisit visit, List<PmPhotoRecord> photos) async {
+    callCount++;
     if (shouldFail) {
       throw Exception('Simulated Drive upload failure');
     }
@@ -240,12 +244,13 @@ void main() {
     expect(controller.visit?.districtName, _districtName);
     expect(controller.visit?.blockName, _blockName);
     expect(controller.visit?.gpName, _gpName);
-    expect(controller.visitStatus, VisitSyncStatus.localOnly);
+    expect(controller.visitStatus, VisitSyncStatus.draft);
     expect(controller.allPhotosCompleted, isFalse);
   });
 
   test(
-    'reopening the same POP resumes the existing LOCAL_ONLY visit instead of starting a new one',
+    'reopening the same POP resumes the existing draft/in-progress visit instead of starting a '
+    'new one',
     () async {
       await _startVisit(controller);
       await controller.capturePhoto(PhotoCategory.popRack);
@@ -296,17 +301,21 @@ void main() {
   });
 
   test(
-    'the visit becomes PENDING_SYNC automatically, offline, once all 5 photos are confirmed',
+    'the visit becomes READY_FOR_SUBMISSION automatically, offline, once all 5 photos are '
+    'confirmed',
     () async {
       await _startVisit(controller);
-      expect(controller.visitStatus, VisitSyncStatus.localOnly);
+      expect(controller.visitStatus, VisitSyncStatus.draft);
 
       await completeAllPhotos();
 
       expect(controller.allPhotosCompleted, isTrue);
-      expect(controller.visitStatus, VisitSyncStatus.pendingSync);
-      // Confirming the 5th photo required no connectivity/drive calls.
+      expect(controller.allPhotosValidForSubmission, isTrue);
+      expect(controller.visitStatus, VisitSyncStatus.readyForSubmission);
+      // Confirming the 5th photo required no connectivity/drive calls —
+      // actual submission/sync only happens via submitVisit().
       expect(connectivity.online, isTrue); // never even checked
+      expect(driveUploadService.callCount, 0);
     },
   );
 
@@ -409,26 +418,87 @@ void main() {
     expect(controller.photosByCategory[PhotoCategory.popRack]?.gps.latitude, firstGps.latitude);
   });
 
-  test('attemptSyncNow with no connection leaves the visit PENDING_SYNC and reports why', () async {
+  test('submitVisit is blocked when one mandatory photo is missing', () async {
+    await _startVisit(controller);
+    // Confirm only 4 of the 5 mandatory categories.
+    for (final category in mandatoryPhotoCategories.skip(1)) {
+      await controller.capturePhoto(category);
+      await controller.confirm();
+    }
+    expect(controller.visitStatus, VisitSyncStatus.inProgress);
+
+    await controller.submitVisit();
+
+    expect(controller.errorMessage, contains('5 mandatory photographs'));
+    expect(controller.visitStatus, VisitSyncStatus.inProgress); // never moved
+    expect(controller.isSyncing, isFalse);
+    expect(driveUploadService.callCount, 0);
+  });
+
+  test(
+    'submitVisit refuses a visit with an invalid/out-of-range GPS reading even if all 5 '
+    'categories have a photo',
+    () async {
+      await _startVisit(controller);
+      await completeAllPhotos();
+      expect(controller.visitStatus, VisitSyncStatus.readyForSubmission);
+
+      // Simulate corrupted/legacy data: a confirmed-looking photo whose
+      // GPS fix is structurally impossible. The normal capture flow
+      // never produces this; this directly exercises the validation
+      // gate submitVisit relies on.
+      final corrupted = controller.photosByCategory[PhotoCategory.popRack]!;
+      controller.photosByCategory[PhotoCategory.popRack] = PmPhotoRecord(
+        visitId: corrupted.visitId,
+        popId: corrupted.popId,
+        category: corrupted.category,
+        localFilePath: corrupted.localFilePath,
+        watermarkedFilePath: corrupted.watermarkedFilePath,
+        capturedAt: corrupted.capturedAt,
+        gps: const GpsReading(latitude: 999, longitude: 20, accuracyMeters: 5),
+      );
+
+      await controller.submitVisit();
+
+      expect(controller.errorMessage, contains('5 mandatory photographs'));
+      expect(driveUploadService.callCount, 0);
+    },
+  );
+
+  test('submitVisit succeeds end-to-end when all five photos are valid', () async {
+    await _startVisit(controller);
+    await completeAllPhotos();
+    driveUploadService.shouldFail = false;
+
+    await controller.submitVisit();
+
+    expect(controller.visitStatus, VisitSyncStatus.submitted);
+    expect(controller.syncMessage, contains('submitted'));
+    expect(controller.isSyncing, isFalse);
+    expect(driveUploadService.callCount, 1);
+  });
+
+  test('offline submission leaves the visit PENDING_SYNC and reports why', () async {
     await _startVisit(controller);
     await completeAllPhotos();
     connectivity.online = false;
 
-    await controller.attemptSyncNow();
+    await controller.submitVisit();
 
     expect(controller.visitStatus, VisitSyncStatus.pendingSync);
     expect(controller.syncMessage, contains('No internet connection'));
     expect(controller.isSyncing, isFalse);
+    expect(driveUploadService.callCount, 0);
   });
 
   test(
-    'attemptSyncNow with the not-yet-implemented Drive service fails without losing local data',
+    'a failed Drive upload marks the visit SYNC_FAILED without losing any local evidence',
     () async {
       await _startVisit(controller);
       await completeAllPhotos();
       driveUploadService.shouldFail = true; // the real default behaves this way too
 
-      await controller.attemptSyncNow();
+      await controller.submitVisit();
 
       expect(controller.visitStatus, VisitSyncStatus.syncFailed);
       expect(controller.syncMessage, isNotNull);
@@ -437,28 +507,86 @@ void main() {
     },
   );
 
-  test('attemptSyncNow can be retried after a failure and succeed once upload works', () async {
+  test('a failed submission can be retried and succeeds once the upload works', () async {
     await _startVisit(controller);
     await completeAllPhotos();
     driveUploadService.shouldFail = true;
 
-    await controller.attemptSyncNow();
+    await controller.submitVisit();
     expect(controller.visitStatus, VisitSyncStatus.syncFailed);
 
     driveUploadService.shouldFail = false;
-    await controller.attemptSyncNow();
+    await controller.submitVisit();
 
-    expect(controller.visitStatus, VisitSyncStatus.synced);
+    expect(controller.visitStatus, VisitSyncStatus.submitted);
+    expect(driveUploadService.callCount, 2);
   });
 
-  test('attemptSyncNow does nothing while photos are still incomplete', () async {
+  test('a near-simultaneous duplicate submission only reaches Drive once', () async {
+    await _startVisit(controller);
+    await completeAllPhotos();
+    driveUploadService.shouldFail = false;
+
+    // Not awaited individually — the second call races the first,
+    // simulating a rapid double-tap of the Submit button.
+    final first = controller.submitVisit();
+    final second = controller.submitVisit();
+    await Future.wait([first, second]);
+
+    expect(driveUploadService.callCount, 1);
+    expect(controller.visitStatus, VisitSyncStatus.submitted);
+  });
+
+  test('resubmitting an already-submitted visit does not upload again', () async {
+    await _startVisit(controller);
+    await completeAllPhotos();
+    driveUploadService.shouldFail = false;
+    await controller.submitVisit();
+    expect(controller.visitStatus, VisitSyncStatus.submitted);
+    expect(driveUploadService.callCount, 1);
+
+    await controller.submitVisit();
+
+    expect(controller.visitStatus, VisitSyncStatus.submitted);
+    expect(driveUploadService.callCount, 1); // no second upload
+  });
+
+  test('submitVisit does nothing but set an error while photos are still incomplete', () async {
     await _startVisit(controller);
     await controller.capturePhoto(PhotoCategory.popRack);
     await controller.confirm();
 
-    await controller.attemptSyncNow();
+    await controller.submitVisit();
 
-    expect(controller.visitStatus, VisitSyncStatus.localOnly);
+    expect(controller.visitStatus, VisitSyncStatus.inProgress);
     expect(controller.syncMessage, isNull);
+    expect(controller.errorMessage, isNotNull);
   });
+
+  test(
+    'a successful submission moves the visit through every expected lifecycle state in order',
+    () async {
+      await _startVisit(controller);
+      final statuses = <VisitSyncStatus>[controller.visitStatus!];
+      controller.addListener(() {
+        final status = controller.visitStatus;
+        if (status != null && statuses.last != status) {
+          statuses.add(status);
+        }
+      });
+
+      await completeAllPhotos();
+      driveUploadService.shouldFail = false;
+      await controller.submitVisit();
+
+      expect(statuses, [
+        VisitSyncStatus.draft,
+        VisitSyncStatus.inProgress,
+        VisitSyncStatus.readyForSubmission,
+        VisitSyncStatus.pendingSync,
+        VisitSyncStatus.syncing,
+        VisitSyncStatus.submitted,
+      ]);
+    },
+  );
 }

@@ -33,16 +33,18 @@ class PendingPhotoReview {
   final GpsReading gps;
 }
 
-/// Drives the "Start PM Visit" screen: starting (or resuming) a visit
-/// for a POP, capturing a live camera photo + a fresh live GPS fix per
-/// category, burning that GPS fix into a watermark, the Retake/Confirm
-/// review step, and — once all 5 categories are confirmed — attempting
-/// synchronization.
+/// Drives both the "Start PM Visit" checklist screen and the
+/// submission screen for a single visit: starting (or resuming) a
+/// visit for a POP, capturing a live camera photo + a fresh live GPS
+/// fix per category, burning that GPS fix into a watermark, the
+/// Retake/Confirm review step, and — once the engineer explicitly
+/// submits — moving the visit through the rest of its lifecycle (see
+/// VisitSyncStatus) via the existing, unchanged sync pipeline.
 ///
 /// Depends only on [PmVisitRepository] plus the camera/location/
-/// watermark/sync services, so adding a real Google Drive upload or
-/// geofence validation later does not require changing this controller
-/// or the screen that uses it — only a new service implementation.
+/// watermark/sync services, so adding geofence validation later does
+/// not require changing this controller or the screens that use it —
+/// only a new service implementation.
 class PmVisitController extends ChangeNotifier {
   factory PmVisitController({
     PmVisitRepository? repository,
@@ -97,10 +99,33 @@ class PmVisitController extends ChangeNotifier {
 
   bool isCompleted(PhotoCategory category) => photosByCategory.containsKey(category);
 
-  /// The PM visit cannot be synced until every mandatory category has a
-  /// confirmed photo.
+  /// Every mandatory category has a confirmed photo (presence only —
+  /// use [allPhotosValidForSubmission] to also check GPS/watermark
+  /// validity before allowing submission).
   bool get allPhotosCompleted =>
       mandatoryPhotoCategories.every((category) => photosByCategory.containsKey(category));
+
+  /// True only when all 5 mandatory categories have a confirmed photo
+  /// that is itself valid for submission — category, timestamp, a
+  /// plausible GPS fix, the original path, and the watermarked path
+  /// (see PmPhotoRecordValidation.isValidForSubmission). This is the
+  /// actual gate [submitVisit] uses; [allPhotosCompleted] alone only
+  /// checks that a row exists per category.
+  bool get allPhotosValidForSubmission => mandatoryPhotoCategories.every((category) {
+    final photo = photosByCategory[category];
+    return photo != null && photo.isValidForSubmission;
+  });
+
+  /// The engineer may submit right now: every photo is present and
+  /// valid, and the visit is either freshly ready for its first
+  /// submission or retrying after a previous sync failure. `false` in
+  /// every other state (including while already syncing, synced, or
+  /// submitted) — this is what prevents a duplicate submission.
+  bool get canSubmit =>
+      visit != null &&
+      allPhotosValidForSubmission &&
+      (visit!.status == VisitSyncStatus.readyForSubmission ||
+          visit!.status == VisitSyncStatus.syncFailed);
 
   /// Starts a new visit for [popId], or resumes the most recent
   /// not-yet-complete one on this device for the same POP — so closing
@@ -222,8 +247,9 @@ class PmVisitController extends ChangeNotifier {
   }
 
   /// Persists the pending photo (original + watermarked evidence copy)
-  /// and marks its category Completed. Once every mandatory category is
-  /// Completed, the visit transitions from LOCAL_ONLY to PENDING_SYNC —
+  /// and marks its category Completed. The visit moves draft ->
+  /// inProgress on the first confirmed photo, and inProgress ->
+  /// readyForSubmission once all 5 are confirmed and valid — both
   /// offline, with no network call. On failure, the pending photo is
   /// discarded (same as retake) and an error is shown — the engineer
   /// must capture again rather than retry just the save.
@@ -248,9 +274,15 @@ class PmVisitController extends ChangeNotifier {
       await _repository.savePhoto(record);
       photosByCategory[review.category] = record;
 
-      if (allPhotosCompleted && currentVisit.status == VisitSyncStatus.localOnly) {
-        await _repository.updateVisitStatus(currentVisit.id, VisitSyncStatus.pendingSync);
-        visit = currentVisit.copyWithStatus(VisitSyncStatus.pendingSync);
+      VisitSyncStatus? nextStatus;
+      if (allPhotosValidForSubmission) {
+        nextStatus = VisitSyncStatus.readyForSubmission;
+      } else if (currentVisit.status == VisitSyncStatus.draft) {
+        nextStatus = VisitSyncStatus.inProgress;
+      }
+      if (nextStatus != null && nextStatus != currentVisit.status) {
+        await _repository.updateVisitStatus(currentVisit.id, nextStatus);
+        visit = currentVisit.copyWithStatus(nextStatus);
       }
     } catch (_) {
       errorMessage = 'Could not save the photo. Please retake it.';
@@ -259,25 +291,74 @@ class PmVisitController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Attempts to sync the current visit right now. Does nothing if the
-  /// visit is not yet complete. Safe to call again after a failure —
-  /// this is exactly how a retry works, since nothing local is ever
-  /// deleted by a failed or skipped attempt (see SyncManager).
-  Future<void> attemptSyncNow() async {
+  /// Submits the current visit: moves it from readyForSubmission (or
+  /// retries from syncFailed) through pendingSync -> syncing ->
+  /// synced -> submitted, using the existing, unchanged
+  /// [SyncManager]/Google Drive pipeline — no second upload path is
+  /// created here.
+  ///
+  /// Refuses (does nothing but set [errorMessage]) unless every photo
+  /// is present and valid — this is what satisfies "the engineer must
+  /// not be able to submit unless all five mandatory photographs
+  /// exist". Refuses silently (no error; this is the duplicate-
+  /// submission guard, not a validation failure) if the visit isn't in
+  /// a submittable state, e.g. a second tap while already syncing, or
+  /// after it has already reached synced/submitted.
+  ///
+  /// Safe to call again after a failure — [SyncManager] never deletes
+  /// or modifies local photos/visit data on a failed or skipped
+  /// attempt, so retrying just repeats the same call.
+  Future<void> submitVisit() async {
+    if (isSyncing) {
+      return; // a submission is already in flight for this visit
+    }
     final currentVisit = visit;
-    if (currentVisit == null || !allPhotosCompleted) {
+    if (currentVisit == null) {
       return;
     }
+    if (!allPhotosValidForSubmission) {
+      errorMessage =
+          'All 5 mandatory photographs (with GPS and watermark) are required before this visit can be submitted.';
+      notifyListeners();
+      return;
+    }
+    final startStatus = currentVisit.status;
+    if (startStatus != VisitSyncStatus.readyForSubmission &&
+        startStatus != VisitSyncStatus.syncFailed) {
+      return; // already submitted/syncing/synced - ignore a duplicate tap
+    }
 
+    // Set before the first await so a near-simultaneous second call
+    // (e.g. a rapid double-tap) sees isSyncing already true.
     isSyncing = true;
+    errorMessage = null;
     syncMessage = null;
     notifyListeners();
 
-    final result = await _syncManager.syncVisit(currentVisit);
+    var workingVisit = currentVisit;
+    if (startStatus == VisitSyncStatus.readyForSubmission) {
+      await _repository.updateVisitStatus(currentVisit.id, VisitSyncStatus.pendingSync);
+      workingVisit = currentVisit.copyWithStatus(VisitSyncStatus.pendingSync);
+      visit = workingVisit;
+      notifyListeners();
+    }
 
-    final refreshed = await _repository.getVisit(currentVisit.id);
-    visit = refreshed ?? currentVisit;
-    syncMessage = result.message ?? 'Visit synced successfully.';
+    // Optimistic: SyncManager writes `syncing` to the repository itself,
+    // but has no reference to this controller, so without this the UI
+    // would jump straight from "Pending Sync" to the final status.
+    visit = workingVisit.copyWithStatus(VisitSyncStatus.syncing);
+    notifyListeners();
+
+    final result = await _syncManager.syncVisit(workingVisit);
+
+    var refreshed = await _repository.getVisit(currentVisit.id);
+    if (refreshed != null && refreshed.status == VisitSyncStatus.synced) {
+      await _repository.updateVisitStatus(refreshed.id, VisitSyncStatus.submitted);
+      refreshed = refreshed.copyWithStatus(VisitSyncStatus.submitted);
+    }
+    visit = refreshed ?? workingVisit;
+    syncMessage = result.message ??
+        (visit!.status == VisitSyncStatus.submitted ? 'Visit submitted successfully.' : null);
     isSyncing = false;
     notifyListeners();
   }

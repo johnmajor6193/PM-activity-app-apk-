@@ -43,3 +43,30 @@ class PmPhotoRecord {
   final String? driveFileId;
   final String? driveFileLink;
 }
+
+extension PmPhotoRecordValidation on PmPhotoRecord {
+  /// True only if this record has everything a PM visit submission
+  /// requires for this category: a non-empty original path, a
+  /// non-empty watermarked path, and a plausible GPS fix. `category`
+  /// and `capturedAt` are always present by construction (non-nullable
+  /// fields), so they need no runtime check.
+  ///
+  /// In normal operation every confirmed photo already satisfies this
+  /// (PmVisitController.capturePhoto never confirms one without a real
+  /// GPS fix and a watermark), so this mainly guards against legacy or
+  /// otherwise corrupted rows — e.g. photos saved before the watermark
+  /// step existed, which have `watermarkedFilePath == null`.
+  bool get isValidForSubmission {
+    if (localFilePath.isEmpty) {
+      return false;
+    }
+    final watermarked = watermarkedFilePath;
+    if (watermarked == null || watermarked.isEmpty) {
+      return false;
+    }
+    if (!gps.isPlausible) {
+      return false;
+    }
+    return true;
+  }
+}

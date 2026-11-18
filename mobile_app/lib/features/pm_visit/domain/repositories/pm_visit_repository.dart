@@ -19,9 +19,10 @@ abstract class PmVisitRepository {
     required String gpName,
   });
 
-  /// The most recent LOCAL_ONLY (not yet fully captured) visit for
-  /// [popId] on this device, if any — used to resume capture after the
-  /// app is closed and reopened, instead of starting a duplicate visit.
+  /// The most recent not-yet-fully-captured visit (status `draft` or
+  /// `inProgress`) for [popId] on this device, if any — used to resume
+  /// capture after the app is closed and reopened, instead of starting
+  /// a duplicate visit.
   Future<PmVisit?> getResumableVisit(int popId);
 
   /// Looks up a single visit by id.
@@ -32,9 +33,9 @@ abstract class PmVisitRepository {
   /// syncFailed).
   Future<List<PmVisit>> getVisitsByStatus(List<VisitSyncStatus> statuses);
 
-  /// Updates just a visit's sync status (e.g. localOnly -> pendingSync
-  /// when all 5 photos are confirmed, or during a sync attempt). Never
-  /// touches its photos.
+  /// Updates just a visit's lifecycle status (e.g. draft -> inProgress
+  /// as photos are confirmed, readyForSubmission -> pendingSync on
+  /// submission, or during a sync attempt). Never touches its photos.
   Future<void> updateVisitStatus(String visitId, VisitSyncStatus status);
 
   /// Inserts the confirmed photo for `record.category`, or replaces it

@@ -33,7 +33,10 @@ class ProfileScreen extends StatelessWidget {
               onPressed: () {
                 Navigator.of(context).push(
                   MaterialPageRoute(
-                    builder: (_) => PopSelectionScreen(employeeId: profile.employeeId),
+                    builder: (_) => PopSelectionScreen(
+                      employeeId: profile.employeeId,
+                      employeeName: profile.name,
+                    ),
                   ),
                 );
               },
