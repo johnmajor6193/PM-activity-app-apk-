@@ -1,4 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The app's own HTTP networking (ApiConfig/AuthApiClient/etc.)
+         needs this in every build type, not just debug/profile — those
+         two variants' AndroidManifest.xml already add it for the
+         Flutter tool's own dev-time use (hot reload), but a release
+         build (what `flutter build apk` produces by default) has no
+         other source for it. Without this, every backend call fails
+         outright on a real device running a release build. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- Required by the PM Photo Capture module: device camera capture
          (image_picker, ImageSource.camera only) and per-photo GPS
          (geolocator). See mobile_app/README.md. -->
@@ -13,10 +21,19 @@
          permissions above. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- usesCleartextTraffic: the backend is plain HTTP by design (no
+         TLS in this dev/LAN setup — see ApiConfig.baseUrl), and Android
+         9+ blocks cleartext HTTP by default. Without this, every
+         backend call fails on a real device even with INTERNET
+         permission granted. Scoped to the whole app, not a specific
+         domain, since the dev backend's LAN IP changes per tester
+         (set via the API_BASE_URL dart define). Revisit if/when the
+         backend gets a real TLS deployment. -->
     <application
         android:label="mobile_app"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"
