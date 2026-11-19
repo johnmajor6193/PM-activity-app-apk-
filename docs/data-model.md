@@ -609,6 +609,14 @@ displayed.
   (see "Protected endpoints (JWT verification)" in `backend/README.md`)
   — no new login flow, no new token storage.
 
+**UI verification**: see `mobile_app/README.md` ("Dashboard UI
+verification") for the full writeup — no Android device/emulator
+exists in this environment, so that pass has not been done; 14
+`testWidgets` tests render the real widget trees instead (at a
+360×800 "normal mobile screen" test width) as the strongest check
+available without one, and caught/fixed one real overflow bug in
+`_OverallSummaryCard`'s header row.
+
 **Known limitation — sync-timestamp display precision**: on SQLite
 (dev/test), `PmVisit.first_synced_at`/`last_synced_at` round-trip
 through storage as naive timestamps (no `+00:00` offset), because

@@ -14,7 +14,15 @@ import 'pop_visit_history_screen.dart';
 /// and the same JWT session as every other screen (see
 /// core/network/auth_session.dart) is reused automatically.
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key});
+  const DashboardScreen({super.key, DashboardController? controller}) : _injectedController = controller;
+
+  /// Lets tests supply a [DashboardController] backed by a fake
+  /// repository, instead of the real HTTP-backed one this screen
+  /// creates by default — same purpose as the `repository` parameter
+  /// every other controller in this app already takes, just threaded
+  /// one level up to the screen. Never set outside tests; default
+  /// (real) behavior is unchanged when omitted.
+  final DashboardController? _injectedController;
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -26,7 +34,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
-    _controller = DashboardController();
+    _controller = widget._injectedController ?? DashboardController();
     _controller.addListener(_onChanged);
     _controller.loadAll();
   }
@@ -188,8 +196,14 @@ class _OverallSummaryCard extends StatelessWidget {
               children: [
                 Icon(Icons.insights, color: _complianceColor(overallPercent)),
                 const SizedBox(width: 8),
-                Text('Overall Compliance', style: Theme.of(context).textTheme.titleMedium),
-                const Spacer(),
+                Expanded(
+                  child: Text(
+                    'Overall Compliance',
+                    style: Theme.of(context).textTheme.titleMedium,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
                 Text(
                   '${overallPercent.toStringAsFixed(1)}%',
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(

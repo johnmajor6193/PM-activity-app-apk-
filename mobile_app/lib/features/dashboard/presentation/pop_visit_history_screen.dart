@@ -10,9 +10,14 @@ import 'pop_visit_history_controller.dart';
 /// endpoint) plus every synced visit, most recent first, each with
 /// its compliance status and full category breakdown.
 class PopVisitHistoryScreen extends StatefulWidget {
-  const PopVisitHistoryScreen({super.key, required this.popId});
+  const PopVisitHistoryScreen({super.key, required this.popId, PopVisitHistoryController? controller})
+      : _injectedController = controller;
 
   final int popId;
+
+  /// Test-only injection seam, same purpose and same default-preserving
+  /// behavior as [DashboardScreen]'s - never set outside tests.
+  final PopVisitHistoryController? _injectedController;
 
   @override
   State<PopVisitHistoryScreen> createState() => _PopVisitHistoryScreenState();
@@ -24,7 +29,7 @@ class _PopVisitHistoryScreenState extends State<PopVisitHistoryScreen> {
   @override
   void initState() {
     super.initState();
-    _controller = PopVisitHistoryController();
+    _controller = widget._injectedController ?? PopVisitHistoryController();
     _controller.addListener(_onChanged);
     _controller.load(widget.popId);
   }

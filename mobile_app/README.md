@@ -224,6 +224,91 @@ wrong timezone on this dev/test SQLite setup specifically — a
 pre-existing backend/storage nuance, not something this module
 introduced).
 
+### Dashboard UI verification
+
+A final verification pass checked `DashboardScreen`/
+`PopVisitHistoryScreen` against the full requirement list (login →
+dashboard navigation, District/Engineer rendering, POP drill-down,
+completed-vs-pending clarity, category breakdown, GP/Block/District
+context, visit date/time, loading/empty/error states, layout on a
+narrow screen, and that PM Visit/GPS/photo/watermark/offline/sync were
+unaffected).
+
+**No Android device or emulator exists in this environment** —
+`flutter doctor` reports no Android SDK, `flutter emulators` finds no
+AVD images, and `flutter devices` only lists a Linux desktop target
+(missing GTK3, won't actually build) and Chrome; this project was only
+ever scaffolded for Android (`flutter create . --platforms=android`),
+so there is no `web/` or `linux/` directory to run on either. A real
+on-device/emulator pass **has not been done** and is explicitly called
+out here rather than assumed to have passed.
+
+What **was** done instead, as the strongest verification available
+without a device: 14 new `testWidgets` tests
+(`test/features/dashboard/dashboard_screen_test.dart`,
+`pop_visit_history_screen_test.dart`,
+`test/features/auth/profile_screen_dashboard_navigation_test.dart`)
+that pump the real widget trees — with real fake-backed data, a
+narrow (360×800) test surface approximating a normal phone width, and
+`tester.takeException()` checked after every render — rather than
+only exercising the controllers. **This is real verification, not a
+substitute for one**: Flutter's test framework genuinely lays out and
+renders the widgets, so a `RenderFlex` overflow is a real, measured
+layout failure, not a guess — and it caught one: `_OverallSummaryCard`'s
+header row overflowed by 115–159px on a 360px-wide screen because its
+title `Text` had no `Expanded`/`Flexible` wrapper. **Fixed** (wrapped
+in `Expanded` with `TextOverflow.ellipsis`); re-run and now passes at
+that width. `PopVisitHistoryScreen` showed no overflow at the same
+width. What a widget test still cannot verify: real touch/scroll
+physics, real keyboard overlap, real status bar/safe-area insets, real
+screen density variety, and real network latency — those need an
+actual device/emulator pass.
+
+To make this injection possible, `DashboardScreen` and
+`PopVisitHistoryScreen` each gained an optional `controller`
+constructor parameter (default `null`, behavior unchanged when
+omitted) — the same dependency-injection pattern every controller in
+this app already uses, just threaded one level up to the screen. This
+is a testability addition only, not a business-logic change; confirmed
+by `flutter analyze` (unchanged, 0 errors) and the full regression
+suite below.
+
+**Manual verification steps for a real Android device/emulator**
+(none of this has been run on one yet):
+
+1. `flutter run` on a real device/emulator with the backend reachable
+   (`--dart-define=API_BASE_URL=http://<host>:8000` if not using the
+   emulator default). Log in as `ENG001` / `9876543210`.
+2. On `ProfileScreen`, tap **"View Dashboard"** — confirm `DashboardScreen`
+   opens with no visible delay/flicker and the status bar/app bar render
+   correctly.
+3. **Districts tab**: confirm the overall summary card and each
+   district card show a percentage, and that long district/POP names
+   don't clip or overflow (rotate to landscape too).
+4. **Engineers tab**: confirm each engineer's visits-synced/compliant
+   ratio renders, including an engineer with 0 visits.
+5. Tap a POP row: confirm `PopVisitHistoryScreen` opens showing the
+   District › Block › GP breadcrumb and Active/Inactive status.
+6. Confirm a POP with no visit this fortnight shows **"Pending"**
+   clearly (grey/hourglass), a POP with a full 5/5 visit shows
+   **"Completed"** + compliant (green/check), and a POP with a partial
+   visit shows **"Completed"** but incomplete (orange) with the exact
+   missing category names listed.
+7. On the visit history list, confirm each visit shows its category
+   chips (✓ green for present, ✗ grey for missing), its `Visit date:`
+   (date only — there is no visit-level time, by design, see
+   `docs/data-model.md`), and its `Synced:` timestamp.
+8. Turn off Wi-Fi/data, pull down to refresh on either tab: confirm a
+   clear, non-crashing error message appears (not a blank screen or an
+   unhandled exception).
+9. Turn the connection back on, refresh, confirm the real data reloads.
+10. From `PopSelectionScreen`'s POP detail card, tap **"View Visit
+    History"**: confirm it opens the same history screen for that POP.
+11. Go back through every PM Visit screen (capture a photo, confirm,
+    retake, submit) exactly as before this module — confirm nothing
+    about GPS capture, the watermark, offline storage, or sync status
+    looks or behaves differently.
+
 No geofencing or MIS export exists yet.
 
 ## Android Project
@@ -302,7 +387,10 @@ flutter test --concurrency=1 \
   test/features/dashboard/dashboard_api_client_test.dart \
   test/features/dashboard/dashboard_repository_impl_test.dart \
   test/features/dashboard/dashboard_controller_test.dart \
-  test/features/dashboard/pop_visit_history_controller_test.dart
+  test/features/dashboard/pop_visit_history_controller_test.dart \
+  test/features/dashboard/dashboard_screen_test.dart \
+  test/features/dashboard/pop_visit_history_screen_test.dart \
+  test/features/auth/profile_screen_dashboard_navigation_test.dart
 ```
 
 Two test files in this project need no fakes at all, because what they
@@ -340,7 +428,7 @@ upload success/failure/retry/idempotency), which also use a fake
 Every other test file fakes the camera/GPS boundaries specifically,
 because `image_picker` and `geolocator` do need a real device/emulator.
 
-`flutter analyze` reports 10 **informational** (not warning/error) notices
+`flutter analyze` reports 13 **informational** (not warning/error) notices
 that `package:flutter/material.dart` is deprecated in favor of a new
 `package:material_ui/material_ui.dart` (a very recent, still-external
 pub.dev package introduced after Flutter 3.47 — not bundled with the

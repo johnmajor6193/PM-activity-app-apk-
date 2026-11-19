@@ -164,6 +164,12 @@ compliance math reimplemented client-side. A separate **web** admin
 dashboard and Excel/MIS export remain later phases — see
 `backend/README.md` and `mobile_app/README.md` ("Dashboard") for the
 endpoints, the mobile screens, and the fortnight definition chosen.
+**Widget-level UI verification is done** (14 new `testWidgets` tests
+render the real widget tree and catch layout defects even without a
+device — this already caught and fixed one real overflow bug on a
+narrow screen); a real Android device/emulator pass is still needed
+and has not been done — see `mobile_app/README.md` ("Dashboard UI
+verification") for exactly what remains and the manual steps to run it.
 
 No geofencing or MIS export has been implemented yet. See
 `mobile_app/README.md` and `backend/README.md` for details and how to
@@ -174,7 +180,7 @@ generated for real with `flutter create .` (Flutter 3.50.0 / Dart
 3.14.0), not hand-written, and the required Android permissions
 (`CAMERA`, `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`,
 `ACCESS_NETWORK_STATE`) are set in its manifest. `flutter pub get`,
-`flutter analyze` (0 errors/warnings), and `flutter test` (85/85
+`flutter analyze` (0 errors/warnings), and `flutter test` (99/99
 passing) have all been run and verified, alongside the backend's own
 `pytest` suite (71/71 passing) — see `mobile_app/README.md` and
 `backend/README.md` for exact commands and which tests are genuinely
