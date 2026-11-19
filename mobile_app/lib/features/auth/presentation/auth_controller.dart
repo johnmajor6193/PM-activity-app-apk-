@@ -22,6 +22,26 @@ class AuthController extends ChangeNotifier {
 
   bool get isLoading => status == AuthStatus.loading;
 
+  // Login is a real network call: if the screen is popped while one is
+  // in flight (e.g. the user backs out), the pending `login()` must not
+  // call notifyListeners() after this controller is disposed — Flutter
+  // throws for that. Guards every notifyListeners() call below.
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
+  @override
+  void notifyListeners() {
+    if (_disposed) {
+      return;
+    }
+    super.notifyListeners();
+  }
+
   Future<void> login({required String employeeId, required String mobileNumber}) async {
     status = AuthStatus.loading;
     errorMessage = null;

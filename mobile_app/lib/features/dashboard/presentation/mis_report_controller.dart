@@ -21,6 +21,26 @@ class MisReportController extends ChangeNotifier {
 
   bool get isDownloading => status == MisReportStatus.downloading;
 
+  // The download is a real network + file-write call: if DashboardScreen
+  // is popped while one is in flight, the pending download must not call
+  // notifyListeners() after this controller is disposed — Flutter throws
+  // for that. Guards every notifyListeners() call below.
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
+  @override
+  void notifyListeners() {
+    if (_disposed) {
+      return;
+    }
+    super.notifyListeners();
+  }
+
   /// Downloads and saves the report for the current device month.
   Future<void> downloadCurrentMonthReport() async {
     status = MisReportStatus.downloading;

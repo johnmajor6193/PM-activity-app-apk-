@@ -134,8 +134,17 @@ class _FakeLocationService extends LocationService {
   bool throwOnRead = false;
   int callCount = 0;
 
+  /// Lets a test hold `capturePhoto` mid-flight (simulating a real GPS
+  /// fix's latency) so it can dispose the controller before this
+  /// resolves, the same way a real device's slower GPS fix leaves a
+  /// window for the engineer to navigate away mid-capture.
+  Duration delay = Duration.zero;
+
   @override
   Future<GpsReading> getCurrentGpsReading() async {
+    if (delay > Duration.zero) {
+      await Future<void>.delayed(delay);
+    }
     if (throwOnRead) {
       throw const PmVisitFailure('Location permission is required to capture GPS for this photo.');
     }
@@ -587,6 +596,20 @@ void main() {
         VisitSyncStatus.syncing,
         VisitSyncStatus.submitted,
       ]);
+    },
+  );
+
+  test(
+    'disposing the controller while capturePhoto is awaiting GPS does not throw '
+    '(e.g. the engineer backs out of the screen during a slow real GPS fix)',
+    () async {
+      await _startVisit(controller);
+      location.delay = const Duration(milliseconds: 50);
+
+      final capture = controller.capturePhoto(PhotoCategory.popRack);
+      controller.dispose();
+
+      await expectLater(capture, completes);
     },
   );
 }

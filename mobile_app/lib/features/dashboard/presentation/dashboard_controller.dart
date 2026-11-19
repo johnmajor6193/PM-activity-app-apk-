@@ -37,6 +37,26 @@ class DashboardController extends ChangeNotifier {
       districtStatus == DashboardLoadStatus.loading ||
       engineerStatus == DashboardLoadStatus.loading;
 
+  // These are real network calls: if DashboardScreen is popped while
+  // one is in flight, the pending load must not call notifyListeners()
+  // after this controller is disposed — Flutter throws for that.
+  // Guards every notifyListeners() call below.
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
+  @override
+  void notifyListeners() {
+    if (_disposed) {
+      return;
+    }
+    super.notifyListeners();
+  }
+
   Future<void> loadAll() {
     return Future.wait([loadDistricts(), loadEngineers()]);
   }

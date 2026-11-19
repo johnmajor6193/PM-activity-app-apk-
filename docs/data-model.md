@@ -712,6 +712,54 @@ a pre-existing backend/storage nuance, not something the dashboard UI
 work introduced, and correcting it means changing already-implemented/
 verified backend code, out of scope for a UI-only module.
 
+## Pre-device-testing review (bug fix)
+
+Before the first real Android device/emulator pass, the full backend
+and mobile implementation was reviewed specifically for defects that
+only a real device's timing/latency would expose (not style or
+hypothetical future issues). The backend had none. The mobile app had
+one genuine, fixed bug:
+
+**Dispose-after-use crash in every `ChangeNotifier` controller**
+(`AuthController`, `DashboardController`, `MisReportController`,
+`PopVisitHistoryController`, `PopSelectionController`,
+`PmVisitController`). None of them guarded against the screen being
+popped (e.g. the engineer backs out) while an `await` was still in
+flight — a real device's GPS fix, camera capture, or network round
+trip can easily take long enough for this to happen, whereas
+`flutter test`'s synchronous fakes never exercise the window. The
+pending call's later `notifyListeners()` then threw
+`"A <Controller> was used after being disposed"`, crashing the
+screen transition. **Fixed** identically in all six controllers: each
+tracks `bool _disposed` (set in an overridden `dispose()`) and
+overrides `notifyListeners()` to no-op once disposed — the async work
+itself still runs to completion (so a photo capture or submission
+still persists correctly even if the screen was already left), only
+the now-pointless UI notification is skipped. Proven with a new
+regression test
+(`pm_visit_controller_test.dart`, "disposing the controller while
+capturePhoto is awaiting GPS does not throw") — confirmed to fail with
+the old `Bad state: A PmVisitController was used after being disposed`
+error before the fix, and pass after it.
+
+**One risk identified but deliberately left unfixed, pending real-device
+evidence**: `WatermarkService.applyWatermark` (`watermark_service.dart`)
+decodes the captured JPEG with `image`'s `decodeImage`, which does
+**not** auto-apply the file's EXIF orientation tag, and never calls
+`img.bakeOrientation()`. Synthetic test images carry no EXIF
+orientation, so this can't be caught by `flutter test`. Many real
+Android camera stacks save a portrait photo as a landscape pixel
+buffer plus an EXIF `Orientation` tag rather than pre-rotated pixels;
+if that happens here, the watermark banner — drawn at the bottom of
+the *raw*, undecoded-orientation buffer — could end up on the wrong
+edge once an EXIF-aware viewer (including the app's own Retake/Confirm
+review screen) displays the image rotated. This is a real-device-only
+risk, not a confirmed bug (it may not reproduce on every device/camera
+combination), so it was not speculatively patched; it is called out
+explicitly as its own item in the device testing checklist
+(`docs/device-testing-checklist.md`) instead, with a note to patch via
+`img.bakeOrientation()` if and only if it's actually observed.
+
 ## MIS Report Download (mobile)
 
 Implementation: `mobile_app/lib/features/dashboard/` (same feature

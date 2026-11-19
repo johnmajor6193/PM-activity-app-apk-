@@ -31,6 +31,26 @@ class PopVisitHistoryController extends ChangeNotifier {
   PopDetail? popDetail;
   List<PopVisitEntry> visits = [];
 
+  // These are real network calls: if the screen is popped while one is
+  // in flight, the pending load must not call notifyListeners() after
+  // this controller is disposed — Flutter throws for that. Guards every
+  // notifyListeners() call below.
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
+  @override
+  void notifyListeners() {
+    if (_disposed) {
+      return;
+    }
+    super.notifyListeners();
+  }
+
   Future<void> load(int popId) async {
     status = DashboardLoadStatus.loading;
     errorMessage = null;

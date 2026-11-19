@@ -93,6 +93,29 @@ class PmVisitController extends ChangeNotifier {
   bool isSyncing = false;
   String? syncMessage;
 
+  // Capture/GPS/sync calls take real, sometimes multi-second time on a
+  // real device: if the screen is popped while one is in flight, the
+  // pending call must not call notifyListeners() after this controller
+  // is disposed — Flutter throws for that. Guards every
+  // notifyListeners() call below. The async work itself still runs to
+  // completion (so capture cleanup / submission still persists
+  // correctly) — only the now-pointless UI notification is skipped.
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
+  @override
+  void notifyListeners() {
+    if (_disposed) {
+      return;
+    }
+    super.notifyListeners();
+  }
+
   bool get isStarted => visit != null;
 
   VisitSyncStatus? get visitStatus => visit?.status;

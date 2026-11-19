@@ -197,6 +197,21 @@ see `mobile_app/README.md` ("Download MIS Report") for the full
 design and its one remaining device-only limitation (confirming the
 saved file's real-device discoverability).
 
+**The project has been reviewed and prepared for real Android device
+testing.** A dedicated pass reviewed every backend and mobile source
+file for device-only defects (not style/refactors) and found, and
+fixed, one genuine bug: six `ChangeNotifier` controllers across the
+app could crash with "used after being disposed" if a screen was
+popped while a real async GPS/camera/network call was still in
+flight — a real-device timing window `flutter test`'s synchronous
+fakes never exercise. See "Pre-device-testing review (bug fix)" in
+`docs/data-model.md` for the fix and the one other risk identified but
+deliberately left unpatched pending real-device evidence (a possible
+EXIF-orientation watermark-placement issue). The full end-to-end
+device testing checklist, and exactly what's already verified by
+automated tests versus what still needs a real device, is in
+`docs/device-testing-checklist.md`.
+
 No geofencing has been implemented — it remains deferred until
 official POP coordinate master data is supplied (see "POP
 Geo-Coordinates — Deferred" in `docs/data-model.md`). See
@@ -208,7 +223,7 @@ generated for real with `flutter create .` (Flutter 3.50.0 / Dart
 3.14.0), not hand-written, and the required Android permissions
 (`CAMERA`, `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`,
 `ACCESS_NETWORK_STATE`) are set in its manifest. `flutter pub get`,
-`flutter analyze` (0 errors/warnings), and `flutter test` (115/115
+`flutter analyze` (0 errors/warnings), and `flutter test` (116/116
 passing) have all been run and verified, alongside the backend's own
 `pytest` suite (92/92 passing) — see `mobile_app/README.md` and
 `backend/README.md` for exact commands and which tests are genuinely
