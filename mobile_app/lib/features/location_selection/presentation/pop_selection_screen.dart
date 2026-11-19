@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../dashboard/presentation/pop_visit_history_screen.dart';
 import '../../pm_visit/presentation/pm_visit_screen.dart';
 import '../domain/entities/block.dart';
 import '../domain/entities/district.dart';
@@ -190,6 +191,17 @@ class _PopSelectionScreenState extends State<PopSelectionScreen> {
                 );
               },
               child: const Text('Start PM Visit'),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton(
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => PopVisitHistoryScreen(popId: detail.id),
+                  ),
+                );
+              },
+              child: const Text('View Visit History'),
             ),
           ],
         ),

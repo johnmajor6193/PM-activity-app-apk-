@@ -147,16 +147,23 @@ resubmitting an already-submitted visit never triggers a second upload
 — see `docs/data-model.md` ("PM Visit Submission and Validation") for
 the full lifecycle and validation rules.
 
-**District/Engineer/POP-wise Dashboard is implemented (backend data API
-only).** `GET /api/v1/dashboard/districts`, `/engineers`, and
+**District/Engineer/POP-wise Dashboard is implemented, backend and
+mobile UI.** `GET /api/v1/dashboard/districts`, `/engineers`, and
 `/pops/{pop_id}/visits` report fortnightly compliance — a POP/engineer
 is "compliant" only if all 5 mandatory categories were actually synced
 for a visit, computed from a minimal `PmVisit`/`PmPhoto` record the
-backend now persists on a successful Drive sync (see
-`docs/data-model.md`, "Backend PmVisit / PmPhoto"). Protected by the
-same JWT check as `/locations/*`. There is no web UI or mobile screen
-for this yet, and no Excel/MIS export — see `backend/README.md`
-("Dashboard") for the endpoints and the fortnight definition chosen.
+backend persists on a successful Drive sync (see `docs/data-model.md`,
+"Backend PmVisit / PmPhoto"), and distinguishes a POP with *any* synced
+visit this fortnight ("completed") from one with none ("pending") —
+see `docs/data-model.md` ("Completed vs pending") for exactly what
+that does and doesn't mean. Protected by the same JWT check as
+`/locations/*`. The Flutter app's new `DashboardScreen` (via
+`ProfileScreen`'s "View Dashboard" button) and `PopVisitHistoryScreen`
+consume these endpoints directly — no mock data, no fortnight/
+compliance math reimplemented client-side. A separate **web** admin
+dashboard and Excel/MIS export remain later phases — see
+`backend/README.md` and `mobile_app/README.md` ("Dashboard") for the
+endpoints, the mobile screens, and the fortnight definition chosen.
 
 No geofencing or MIS export has been implemented yet. See
 `mobile_app/README.md` and `backend/README.md` for details and how to
@@ -167,8 +174,8 @@ generated for real with `flutter create .` (Flutter 3.50.0 / Dart
 3.14.0), not hand-written, and the required Android permissions
 (`CAMERA`, `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`,
 `ACCESS_NETWORK_STATE`) are set in its manifest. `flutter pub get`,
-`flutter analyze` (0 errors/warnings), and `flutter test` (56/56
+`flutter analyze` (0 errors/warnings), and `flutter test` (85/85
 passing) have all been run and verified, alongside the backend's own
-`pytest` suite (66/66 passing) — see `mobile_app/README.md` and
+`pytest` suite (71/71 passing) — see `mobile_app/README.md` and
 `backend/README.md` for exact commands and which tests are genuinely
 real versus fake-backed.

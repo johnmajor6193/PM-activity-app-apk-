@@ -13,7 +13,7 @@ lib/
 ├── core/                     # cross-cutting concerns
 │   ├── constants/
 │   ├── errors/
-│   ├── network/              # API client setup (later step)
+│   ├── network/              # ApiConfig (backend base URL), AuthSession (in-memory JWT holder, see Protected endpoints below)
 │   ├── theme/
 │   └── utils/
 ├── features/
@@ -30,7 +30,10 @@ lib/
 │   │   ├── domain/            # PmVisitRepository + DriveUploadService interfaces, PmVisit/PmPhotoRecord/GpsReading/PhotoCategory/VisitSyncStatus (+ GpsReadingValidation/PmPhotoRecordValidation extensions)
 │   │   └── presentation/      # PmVisitController (submitVisit), PmVisitScreen, PmVisitSubmissionScreen (Review & Submit)
 │   ├── sync/                 # reserved (e.g. background/scheduled sync) - the sync queue, state model, and Drive upload all ended up living in pm_visit/ instead, see above
-│   └── dashboard/            # POP visit history (device-local views)
+│   └── dashboard/            # District/Engineer/POP-wise compliance dashboard (implemented; see "Dashboard" below)
+│       ├── data/              # DashboardApiClient, DashboardRepositoryImpl
+│       ├── domain/            # DashboardRepository interface, DistrictCompliance/PopPeriodStatus/EngineerPerformance/PopVisitEntry, DashboardFailure
+│       └── presentation/      # DashboardController, DashboardScreen, PopVisitHistoryController, PopVisitHistoryScreen
 └── shared/
     ├── widgets/               # reusable UI components
     └── models/                # shared data models
@@ -195,7 +198,33 @@ rapid double-tap or a resubmit of an already-`submitted` visit from
 ever triggering a second Drive upload — see `docs/data-model.md` ("PM
 Visit Submission and Validation") for the full lifecycle and test list.
 
-No geofencing, dashboard, or MIS exists yet.
+**Dashboard is implemented.** `DashboardScreen` (opened via the new
+"View Dashboard" button on `ProfileScreen`) has two tabs — Districts
+and Engineers — for a selected fortnight, reading the backend's
+already-implemented `GET /dashboard/districts`/`/engineers` endpoints
+directly; no mock data anywhere, and no fortnight/compliance math is
+re-implemented in Dart (the backend's `fortnight_bounds` stays the one
+place that logic lives — "previous"/"next fortnight" navigation just
+reuses the `period_start`/`period_end` the backend already returned).
+The Districts tab expands into a per-POP completed/pending breakdown
+(each POP's status, and, when incomplete, exactly which mandatory
+categories are missing by name — reusing the existing
+`PhotoCategory.label` mapping, not a second one). Tapping a POP (or
+the new "View Visit History" button on POP Selection's detail card)
+opens `PopVisitHistoryScreen`: the POP's District › Block › GP
+context, read from the existing, unchanged
+`GET /locations/pops/{id}` endpoint, plus every synced visit for that
+POP with its own compliance badge and category breakdown, via
+`GET /dashboard/pops/{id}/visits`. Every dashboard request reuses the
+same `AuthSession`-held JWT as every other protected call — no new
+login flow, no new token handling. See `docs/data-model.md`
+("Dashboard UI (mobile)") for the full design notes, including the one
+known display-precision limitation (sync timestamps can show in the
+wrong timezone on this dev/test SQLite setup specifically — a
+pre-existing backend/storage nuance, not something this module
+introduced).
+
+No geofencing or MIS export exists yet.
 
 ## Android Project
 
@@ -269,7 +298,11 @@ flutter test --concurrency=1 \
   test/features/pm_visit/watermark_service_test.dart \
   test/features/pm_visit/sqflite_pm_visit_repository_test.dart \
   test/features/pm_visit/sync_manager_test.dart \
-  test/features/pm_visit/google_drive_upload_service_test.dart
+  test/features/pm_visit/google_drive_upload_service_test.dart \
+  test/features/dashboard/dashboard_api_client_test.dart \
+  test/features/dashboard/dashboard_repository_impl_test.dart \
+  test/features/dashboard/dashboard_controller_test.dart \
+  test/features/dashboard/pop_visit_history_controller_test.dart
 ```
 
 Two test files in this project need no fakes at all, because what they
@@ -307,7 +340,7 @@ upload success/failure/retry/idempotency), which also use a fake
 Every other test file fakes the camera/GPS boundaries specifically,
 because `image_picker` and `geolocator` do need a real device/emulator.
 
-`flutter analyze` reports 8 **informational** (not warning/error) notices
+`flutter analyze` reports 10 **informational** (not warning/error) notices
 that `package:flutter/material.dart` is deprecated in favor of a new
 `package:material_ui/material_ui.dart` (a very recent, still-external
 pub.dev package introduced after Flutter 3.47 — not bundled with the

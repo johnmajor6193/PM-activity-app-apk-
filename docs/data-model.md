@@ -472,10 +472,12 @@ point; nothing here can mark local evidence for deletion either way.
 Implementation: `backend/app/services/compliance.py`,
 `backend/app/api/v1/endpoints/dashboard.py`. All three endpoints
 require a logged-in employee (`get_current_employee`, same as
-`/locations/*`) and read only the `PmVisit`/`PmPhoto` rows above —
-there is no mobile-app UI for this yet (a web admin dashboard remains
-a later phase per the top-level README); this module is the data API
-it will eventually call.
+`/locations/*`) and read only the `PmVisit`/`PmPhoto` rows above.
+
+**A mobile (Flutter) Dashboard UI now consumes these endpoints** — see
+"Dashboard UI (mobile)" below. A separate **web admin dashboard**
+remains a later phase per the top-level README; this backend module
+is also the data API that will eventually serve it, unchanged.
 
 - **`GET /api/v1/dashboard/districts?date=YYYY-MM-DD`** — for each
   District, its active POPs broken down individually (see "Completed
@@ -563,6 +565,63 @@ of visits makes an in-Python scan too slow.
 **Monthly MIS / Excel export is a separate, not-yet-built module** —
 only the JSON dashboard data API above exists; no tabular export
 exists yet.
+
+## Dashboard UI (mobile)
+
+Implementation: `mobile_app/lib/features/dashboard/` (`domain`/`data`/
+`presentation`, same layering as every other feature). Reads only the
+backend endpoints above — no mock/placeholder data anywhere, and no
+new business rule: fortnight boundaries, compliance percentages, and
+completed/pending status are all computed server-side and simply
+displayed.
+
+- **`DashboardScreen`** — two tabs, **Districts** and **Engineers**,
+  both for the same selected fortnight. A header lets the engineer
+  step to the previous/next fortnight or jump back to today; "previous"
+  /"next" reuse the `period_start`/`period_end` the backend already
+  returned (`start - 1 day` / `end + 1 day`) rather than re-deriving
+  fortnight math in Dart — `fortnight_bounds` stays the single place
+  that logic lives.
+  - **Districts tab**: an overall summary (aggregated client-side from
+    the per-district numbers already returned — no new data), then one
+    expandable card per District with its compliance % and a per-POP
+    list showing each POP's completed/pending status and, when
+    incomplete, exactly which mandatory categories are missing (by
+    name, reusing the mobile app's own `PhotoCategory.label` mapping —
+    not a second category-name definition).
+  - **Engineers tab**: one row per active Employee with visits synced
+    and a compliant-visits ratio.
+- **`PopVisitHistoryScreen`** (opened by tapping a POP, from either the
+  Districts tab or POP Selection's new "View Visit History" button) —
+  the POP's District › Block › GP context, fetched from the existing,
+  unchanged `GET /locations/pops/{id}` endpoint (not a dashboard
+  endpoint; this is why POP-level District/Block/GP context needed no
+  backend change), plus every synced visit for that POP via
+  `GET /dashboard/pops/{id}/visits`, each with its own compliance
+  badge and full category present/missing breakdown.
+- **Entry points** (both purely additive, no existing screen logic
+  changed): `ProfileScreen` gained a "View Dashboard" button;
+  `PopSelectionScreen`'s POP detail card gained a "View Visit History"
+  button alongside the existing "Start PM Visit" one.
+- **Auth reused as-is**: every dashboard request goes through
+  `DashboardApiClient`, which attaches `Authorization: Bearer <token>`
+  from the same `AuthSession` every other protected call already uses
+  (see "Protected endpoints (JWT verification)" in `backend/README.md`)
+  — no new login flow, no new token storage.
+
+**Known limitation — sync-timestamp display precision**: on SQLite
+(dev/test), `PmVisit.first_synced_at`/`last_synced_at` round-trip
+through storage as naive timestamps (no `+00:00` offset), because
+SQLite has no native timezone-aware datetime type, even though the
+column is declared `DateTime(timezone=True)` and written with
+`datetime.now(timezone.utc)`. The Flutter side therefore parses them
+with `DateTime.parse` and treats the result as local rather than UTC
+when no offset is present; the on-screen "Synced:" time can be off by
+the server's UTC offset in this dev/test setup. On Postgres the column
+preserves the offset and this does not occur. Not fixed here — it is
+a pre-existing backend/storage nuance, not something the dashboard UI
+work introduced, and correcting it means changing already-implemented/
+verified backend code, out of scope for a UI-only module.
 
 ## Open Decisions (to confirm before further backend implementation)
 

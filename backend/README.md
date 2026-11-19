@@ -92,10 +92,12 @@ the dashboard something to read.
 **District/Engineer/POP-wise Dashboard is implemented.**
 `GET /api/v1/dashboard/districts`, `/engineers`, and
 `/pops/{pop_id}/visits` read the `PmVisit`/`PmPhoto` rows above to
-report fortnightly compliance — see "Dashboard" below. No web UI exists
-for this yet (a later phase per the top-level README); these are the
-data endpoints it will eventually call. Monthly MIS/Excel export is a
-separate module, not built yet.
+report fortnightly compliance — see "Dashboard" below. A mobile
+(Flutter) Dashboard UI now consumes these endpoints (see
+`mobile_app/README.md`); a separate **web** admin dashboard remains a
+later phase per the top-level README, and this same data API is what
+it will eventually call too. Monthly MIS/Excel export is a separate
+module, not built yet.
 
 `Employee.assigned_district_name` remains a plain string (not a `District`
 FK) — Employee Login was kept unchanged while building this module; see
@@ -353,9 +355,11 @@ pending") for the full writeup.
 over a rolling 14-day window, and for the exact `PmVisit`/`PmPhoto`
 schema this reads.
 
-**No web UI exists for this yet.** These are the data endpoints a
-later admin-dashboard phase will call; nothing in this step adds a
-page, a chart, or an Excel/MIS export.
+**A mobile Dashboard UI now consumes these endpoints** — see
+`mobile_app/README.md` ("Dashboard") and
+`mobile_app/lib/features/dashboard/`. A separate **web** admin
+dashboard remains a later phase; nothing in this step adds an
+Excel/MIS export.
 
 **Known scale limitation**: both the district and engineer endpoints
 load every `PmVisit` row and filter/aggregate in Python, not SQL. Fine

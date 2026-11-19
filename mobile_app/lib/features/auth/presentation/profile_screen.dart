@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../dashboard/presentation/dashboard_screen.dart';
 import '../../location_selection/presentation/pop_selection_screen.dart';
 import '../domain/entities/employee_profile.dart';
 import 'login_screen.dart';
@@ -41,6 +42,15 @@ class ProfileScreen extends StatelessWidget {
                 );
               },
               child: const Text('Select POP'),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton(
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const DashboardScreen()),
+                );
+              },
+              child: const Text('View Dashboard'),
             ),
             const SizedBox(height: 16),
             OutlinedButton(
