@@ -302,4 +302,54 @@ void main() {
     expect(find.byTooltip('Jump to today'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('scrolling reveals districts that start off-screen on a short mobile viewport', (
+    tester,
+  ) async {
+    // A short viewport (common for phones in landscape, or a tall
+    // AppBar/notch eating into available height) so the district list
+    // genuinely does not fit on one screen - this exercises the real
+    // Scrollable/ListView, not just a tall test surface that happens
+    // to fit everything.
+    tester.view.physicalSize = const Size(360, 480) * tester.view.devicePixelRatio;
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final repository = _FakeDashboardRepository();
+    repository.districtResponse = DistrictDashboard(
+      periodStart: DateTime(2026, 11, 16),
+      periodEnd: DateTime(2026, 11, 30),
+      districts: List.generate(
+        10,
+        (i) => DistrictCompliance(
+          districtId: i,
+          districtName: 'District Number $i',
+          totalActivePops: 1,
+          compliantPops: 1,
+          compliancePercent: 100.0,
+          completedPops: 1,
+          pendingPops: 0,
+          pops: const [],
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: DashboardScreen(controller: DashboardController(repository: repository))),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('District Number 0'), findsOneWidget);
+    expect(find.text('District Number 9'), findsNothing); // off-screen until scrolled to
+
+    // Drag the real ListView, repeatedly, exactly as a finger-swipe
+    // would - this exercises the actual Scrollable, not a shortcut.
+    for (var i = 0; i < 10 && find.text('District Number 9').evaluate().isEmpty; i++) {
+      await tester.drag(find.byType(ListView).first, const Offset(0, -300));
+      await tester.pump();
+    }
+    await tester.pumpAndSettle();
+
+    expect(find.text('District Number 9'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

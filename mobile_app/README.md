@@ -273,6 +273,44 @@ is a testability addition only, not a business-logic change; confirmed
 by `flutter analyze` (unchanged, 0 errors) and the full regression
 suite below.
 
+**A second verification round went further**, still without a
+device: a real `uvicorn` process (the actual FastAPI app, not
+`TestClient`) was started on a real loopback socket, and (a) `curl`
+exercised real login, real `/locations/*`/`/dashboard/*` calls with a
+real JWT, and a real 401 for no/invalid tokens; (b) the real,
+unmodified `DashboardApiClient`/`DashboardRepositoryImpl`/
+`AuthSession` production Dart code (not a test double) was run via
+`dart run` against that same real server and correctly logged in,
+fetched and parsed real district/engineer/visit-history data, and
+correctly threw `DashboardFailure` for an anonymous request. This is
+genuine real-API/real-network verification of the server and the
+Flutter networking code together — it is **not** a substitute for
+running on a real Android device (no real mobile network stack, no
+real device-to-emulator-host routing, no `10.0.2.2` alias involved).
+A real `tester.drag()` scroll gesture was also added
+(`dashboard_screen_test.dart`) and confirmed the district list
+genuinely scrolls to reveal off-screen content on a short viewport —
+real `Scrollable` behavior, though still not a real finger on real
+glass.
+
+**Verification summary against the 11-item checklist** (`PASS` =
+genuinely verified by one of the methods above; `BLOCKED` = requires
+an actual Android device/emulator this environment does not have):
+
+| # | Item | Result |
+|---|---|---|
+| 1 | Dashboard loading and navigation | PASS (widget test) |
+| 2 | District compliance | PASS (widget test + real server/client) |
+| 3 | Engineer performance | PASS (widget test + real server/client) |
+| 4 | POP visit history | PASS (widget test + real server/client) |
+| 5 | Completed/pending status | PASS (widget test + real server/client) |
+| 6 | Category-wise photo compliance | PASS (widget test) |
+| 7 | GP/Block/District context | PASS (widget test + real server/client) |
+| 8 | Visit date/time | PASS (widget test); display-precision caveat above still applies |
+| 9 | Loading/empty/error states | PASS (widget test + a real 401 over real HTTP) |
+| 10 | Mobile layout, scrolling, safe areas, keyboard | PARTIAL — layout (one bug found+fixed) and scrolling PASS at widget-test level; safe-area insets and real touch remain BLOCKED (no device); keyboard is N/A (neither screen has a text field) |
+| 11 | Real API/network behavior | PARTIAL — real server + real Flutter client verified over a real socket (PASS); real mobile network/device HTTP stack remains BLOCKED (no device) |
+
 **Manual verification steps for a real Android device/emulator**
 (none of this has been run on one yet):
 
