@@ -44,5 +44,10 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
+# Gradle's own root-project build output (reports, etc.) - subprojects'
+# build dirs are already redirected to /build/<project> by
+# android/build.gradle.kts, but the root project's own stays here.
+/android/build/
+
 # Widget Preview related
 .widget_preview/
