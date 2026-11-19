@@ -11,7 +11,13 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_name: str = "TANFINET POP PM Monitoring API"
-    database_url: str = "postgresql://postgres:postgres@localhost:5432/tanfinet_pm"
+    # Local development default: a file-based SQLite database, so running
+    # the server needs no separate database service installed. PostgreSQL
+    # remains fully supported (see app/db/session.py) and is what
+    # production should use — set DATABASE_URL to a postgresql:// URL
+    # (e.g. postgresql://postgres:postgres@localhost:5432/tanfinet_pm) to
+    # use it, including in .env.
+    database_url: str = "sqlite:///./tanfinet_pm.db"
 
     # Auth. "dev" authenticates by Employee ID + mobile number lookup only,
     # for local/test use. Swap to an "otp" strategy in a later step without

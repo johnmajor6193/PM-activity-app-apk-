@@ -419,17 +419,22 @@ deliverable.
 
 ## Running locally
 
-Requires Python 3.11+ and a PostgreSQL instance (tables are created
-automatically on startup; no Alembic migrations yet).
+Requires Python 3.11+ (tables are created automatically on startup; no
+Alembic migrations yet). By default this uses a local **SQLite** file
+(`DATABASE_URL=sqlite:///./tanfinet_pm.db`, see `.env.example`) — no
+separate database service to install or start. **PostgreSQL remains
+fully supported and is what production should use**: set
+`DATABASE_URL` to a `postgresql://` URL instead (the commented-out
+line in `.env.example`) to use it, including locally if you prefer.
 
 ```bash
 cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # edit DATABASE_URL if needed
+cp .env.example .env   # edit DATABASE_URL only if you want PostgreSQL instead of the SQLite default
 
-uvicorn app.main:app --reload
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 # then: curl http://127.0.0.1:8000/health
 #
 # /locations/* and /visits/{id}/sync now require a token (see
@@ -450,8 +455,9 @@ uvicorn app.main:app --reload
 #     -F 'files=@/path/to/pop_rack_watermarked.jpg'
 ```
 
-Run tests (uses an isolated SQLite file via `tests/conftest.py` — no
-Postgres needed):
+Run tests (uses its own isolated, temporary SQLite file via
+`tests/conftest.py`, separate from the `tanfinet_pm.db` file the server
+itself uses — no Postgres needed):
 
 ```bash
 pip install pytest httpx

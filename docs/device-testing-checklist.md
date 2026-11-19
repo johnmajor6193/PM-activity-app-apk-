@@ -155,14 +155,17 @@ anywhere in this project until this pass.
 
 ### 4.1 Backend — must be ready before testing starts
 
-1. **Python 3.11+ and PostgreSQL** (tables are created automatically
-   on startup; no separate migration step). SQLite is only used by
-   the automated test suite, not for actually running the server.
+1. **Python 3.11+** (tables are created automatically on startup; no
+   separate migration step). The default `DATABASE_URL` is a local
+   SQLite file (`sqlite:///./tanfinet_pm.db`) — no separate database
+   service needed. PostgreSQL is still fully supported (recommended
+   for production): uncomment the `postgresql://` line in `.env`
+   instead if you want to test against that.
    ```bash
    cd backend
    python3 -m venv .venv && source .venv/bin/activate
    pip install -r requirements.txt
-   cp .env.example .env   # edit DATABASE_URL to point at your Postgres instance
+   cp .env.example .env   # SQLite by default; edit DATABASE_URL only if you want PostgreSQL instead
    ```
 2. **Run bound to all interfaces**, not just localhost, so the phone
    can reach it over Wi-Fi:

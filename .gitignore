@@ -27,6 +27,9 @@ backend/env/
 backend/.pytest_cache/
 backend/.mypy_cache/
 backend/*.egg-info/
+# Local-dev SQLite database (see backend/.env.example, DATABASE_URL) -
+# generated at runtime, never committed.
+backend/*.db
 
 # ---- Secrets / environment ----
 .env
