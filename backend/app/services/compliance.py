@@ -62,16 +62,63 @@ def is_compliant(visit: PmVisit) -> bool:
     PmVisitController.allPhotosValidForSubmission); this checks what
     was actually persisted, not what should have been sent.
     """
-    categories = {photo.category for photo in visit.photos}
-    return MANDATORY_PHOTO_CATEGORIES.issubset(categories)
+    return MANDATORY_PHOTO_CATEGORIES.issubset(_present_categories(visit))
+
+
+def _present_categories(visit: PmVisit) -> set[str]:
+    return {photo.category for photo in visit.photos}
+
+
+def category_breakdown(visit: PmVisit) -> tuple[list[str], list[str]]:
+    """Which of the 5 mandatory categories are present vs. missing for
+    a synced visit, both sorted for a deterministic API response.
+    Derived entirely from the PmPhoto rows already persisted for this
+    visit - nothing inferred or assumed.
+    """
+    present = _present_categories(visit)
+    missing = MANDATORY_PHOTO_CATEGORIES - present
+    return sorted(present), sorted(missing)
+
+
+def _best_visit_for_pop(visits: list[PmVisit]) -> PmVisit:
+    """When a POP has more than one synced visit in a period, picks
+    the one to represent the POP's status: a compliant one if any
+    exists, else the most recently started one. Arbitrary but
+    deterministic - most periods will only ever have one visit per POP.
+    """
+    compliant = next((visit for visit in visits if is_compliant(visit)), None)
+    if compliant is not None:
+        return compliant
+    return max(visits, key=lambda visit: (_parse_visit_date(visit.visit_date), visit.first_synced_at))
 
 
 def district_compliance(db: Session, start: date, end: date) -> list[dict]:
-    """One row per District: how many of its active POPs received at
-    least one fully-compliant (5/5 category) visit in [start, end].
+    """One row per District, each with its own POP-by-POP breakdown.
+
+    "Completed" vs "pending" (resolves the audit's completed-vs-pending
+    gap) uses only what the backend actually has: a POP is `completed`
+    if it has *any* successfully synced PmVisit in [start, end],
+    `pending` if it has none. This is **not** the same thing as
+    compliant (5/5 categories) - a POP can be `completed` with an
+    incomplete photo set; `compliant_pops`/`compliance_percent` below
+    are unchanged and still mean 5/5.
+
+    Important limitation, not solved here because the data to solve it
+    doesn't exist: `pending` only means "no synced visit yet this
+    period." It cannot distinguish an engineer actively capturing this
+    POP right now, one who hasn't started, or one whose sync failed
+    and is retrying - the mobile app's draft/inProgress/pendingSync/
+    syncFailed states are never transmitted to the backend at all (see
+    docs/data-model.md). Telling those apart would need the mobile app
+    to additionally report a visit-start or sync-attempt event, which
+    is a new feature, not a bug in this aggregation - not added here.
     """
+    period_visits = _visits_in_period(db, start, end)
+    visits_by_pop: dict[int, list[PmVisit]] = {}
+    for visit in period_visits:
+        visits_by_pop.setdefault(visit.pop_id, []).append(visit)
     compliant_pop_ids = {
-        visit.pop_id for visit in _visits_in_period(db, start, end) if is_compliant(visit)
+        pop_id for pop_id, visits in visits_by_pop.items() if any(is_compliant(v) for v in visits)
     }
 
     rows: list[dict] = []
@@ -81,10 +128,46 @@ def district_compliance(db: Session, start: date, end: date) -> list[dict]:
             .join(GramaPanchayat, Pop.gp_id == GramaPanchayat.id)
             .join(Block, GramaPanchayat.block_id == Block.id)
             .filter(Block.district_id == district.id, Pop.is_active.is_(True))
+            .order_by(Pop.pop_code)
             .all()
         )
         total = len(active_pops)
         compliant = sum(1 for pop in active_pops if pop.id in compliant_pop_ids)
+
+        pop_rows: list[dict] = []
+        completed = 0
+        for pop in active_pops:
+            visits = visits_by_pop.get(pop.id, [])
+            if not visits:
+                pop_rows.append(
+                    {
+                        "pop_id": pop.id,
+                        "pop_code": pop.pop_code,
+                        "pop_name": pop.name,
+                        "status": "pending",
+                        "is_compliant": False,
+                        "latest_visit_id": None,
+                        "categories_present": [],
+                        "categories_missing": sorted(MANDATORY_PHOTO_CATEGORIES),
+                    }
+                )
+                continue
+            completed += 1
+            best = _best_visit_for_pop(visits)
+            present, missing = category_breakdown(best)
+            pop_rows.append(
+                {
+                    "pop_id": pop.id,
+                    "pop_code": pop.pop_code,
+                    "pop_name": pop.name,
+                    "status": "completed",
+                    "is_compliant": is_compliant(best),
+                    "latest_visit_id": best.id,
+                    "categories_present": present,
+                    "categories_missing": missing,
+                }
+            )
+
         rows.append(
             {
                 "district_id": district.id,
@@ -92,6 +175,9 @@ def district_compliance(db: Session, start: date, end: date) -> list[dict]:
                 "total_active_pops": total,
                 "compliant_pops": compliant,
                 "compliance_percent": round((compliant / total) * 100, 1) if total else 0.0,
+                "completed_pops": completed,
+                "pending_pops": total - completed,
+                "pops": pop_rows,
             }
         )
     return rows
@@ -125,23 +211,37 @@ def engineer_compliance(db: Session, start: date, end: date) -> list[dict]:
 
 
 def pop_visit_history(db: Session, pop_id: int) -> list[dict]:
-    """Every synced visit for one POP, most recent first."""
+    """Every synced visit for one POP, most recent first.
+
+    `status` is always `"completed"` here: a visit only ever appears
+    in this list because it was successfully synced (see PmVisit) - a
+    `"pending"` POP (see district_compliance) has no visit at all, so
+    nothing to list. The field is still included, rather than left
+    implicit, so API consumers get an explicit value instead of having
+    to infer it from a row's mere presence.
+    """
     visits = (
         db.query(PmVisit)
         .filter(PmVisit.pop_id == pop_id)
         .order_by(PmVisit.visit_date.desc(), PmVisit.first_synced_at.desc())
         .all()
     )
-    return [
-        {
-            "visit_id": visit.id,
-            "employee_id": visit.employee.employee_code,
-            "employee_name": visit.employee.name,
-            "visit_date": visit.visit_date,
-            "photo_count": len(visit.photos),
-            "is_compliant": is_compliant(visit),
-            "first_synced_at": visit.first_synced_at,
-            "last_synced_at": visit.last_synced_at,
-        }
-        for visit in visits
-    ]
+    rows = []
+    for visit in visits:
+        present, missing = category_breakdown(visit)
+        rows.append(
+            {
+                "visit_id": visit.id,
+                "employee_id": visit.employee.employee_code,
+                "employee_name": visit.employee.name,
+                "visit_date": visit.visit_date,
+                "status": "completed",
+                "photo_count": len(visit.photos),
+                "is_compliant": is_compliant(visit),
+                "categories_present": present,
+                "categories_missing": missing,
+                "first_synced_at": visit.first_synced_at,
+                "last_synced_at": visit.last_synced_at,
+            }
+        )
+    return rows

@@ -321,15 +321,31 @@ endpoints, all under `/api/v1/dashboard`:
 
 | Endpoint | Reports |
 |---|---|
-| `GET /districts?date=YYYY-MM-DD` | Per District: how many of its *active* POPs got at least one fully-compliant visit in the fortnight containing `date` (default: today), and the compliance %. |
+| `GET /districts?date=YYYY-MM-DD` | Per District: aggregate compliance % for the fortnight containing `date` (default: today), **plus** a `pops` list — every active POP's `completed`/`pending` status and its mandatory-category breakdown. |
 | `GET /engineers?date=YYYY-MM-DD` | Per active Employee: visits synced and how many were fully compliant, in that same fortnight. Every active employee is listed, including zero-visit ones. |
-| `GET /pops/{pop_id}/visits` | Every synced visit for one POP, most recent first — not windowed to a fortnight. 404 if the POP doesn't exist. |
+| `GET /pops/{pop_id}/visits` | Every synced visit for one POP, most recent first, each with its category breakdown — not windowed to a fortnight. 404 if the POP doesn't exist. |
 
 **"Fully compliant"** means all 5 mandatory photo categories were
 actually persisted for that visit (`app/models/pm_photo.py:
 MANDATORY_PHOTO_CATEGORIES`) — not merely that a sync happened. This
 is computed from what the backend actually recorded, never a geofence
 check and never a POP coordinate.
+
+**Completed vs pending, and the per-category breakdown** (added to
+close two audit-flagged data-layer gaps): each POP in the `districts`
+response, and each visit in `pops/{pop_id}/visits`, now has
+`categories_present`/`categories_missing` (the exact mandatory
+categories found or not found) and a `status`. For a POP, `status` is
+`"completed"` if it has *any* synced visit this fortnight (regardless
+of category completeness — that's `is_compliant`, a separate flag) or
+`"pending"` if it has none. **`"pending"` means only "no synced visit
+yet"** — it cannot tell an engineer currently working this POP apart
+from one who hasn't started, because the mobile app's draft/in-progress/
+pending-sync states are never transmitted to the backend at all (only
+a *successful* sync is). Distinguishing those would need the mobile
+app to report a visit-start event, which doesn't exist — not solved
+here with assumed data. See `docs/data-model.md` ("Completed vs
+pending") for the full writeup.
 
 **Fortnight = calendar fortnight** (1st–15th, 16th–end-of-month) —
 `app/services/compliance.py:fortnight_bounds`. See `docs/data-model.md`

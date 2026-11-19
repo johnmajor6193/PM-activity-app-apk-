@@ -35,9 +35,12 @@ def get_district_dashboard(
     ),
     db: Session = Depends(get_db),
 ) -> DistrictDashboardResponse:
-    """District-wise compliance: for each District, how many of its
-    active POPs received at least one fully-compliant (5/5 mandatory
-    categories synced) visit in the fortnight containing `date`.
+    """District-wise compliance: for each District, its aggregate
+    compliance % (5/5 mandatory categories) plus a per-POP breakdown
+    (`pops`) showing each active POP's completed/pending status and
+    exactly which mandatory categories are present/missing - see
+    docs/data-model.md ("Completed vs pending") for what `pending`
+    does and doesn't mean here.
     """
     start, end = fortnight_bounds(for_date or _today())
     rows = district_compliance(db, start, end)

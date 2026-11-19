@@ -14,8 +14,10 @@ import json
 from datetime import date
 
 from app.main import app
+from app.models.pm_photo import PmPhoto
+from app.models.pm_visit import PmVisit
 from app.models.pop import Pop
-from app.services.compliance import fortnight_bounds
+from app.services.compliance import category_breakdown, fortnight_bounds, is_compliant
 from app.services.drive import get_drive_upload_service
 from app.services.drive.fake_drive_upload_service import FakeDriveUploadService
 
@@ -114,6 +116,44 @@ def test_fortnight_bounds_second_half_of_december_rolls_into_the_same_year():
     assert fortnight_bounds(date(2026, 12, 20)) == (date(2026, 12, 16), date(2026, 12, 31))
 
 
+def _fake_visit(categories: list[str]) -> PmVisit:
+    """An in-memory PmVisit, never persisted - enough to exercise the
+    pure category_breakdown/is_compliant functions directly."""
+    visit = PmVisit(id="fake", employee_id=1, pop_id=1, visit_date="2026-01-01")
+    visit.photos = [
+        PmPhoto(visit_id="fake", category=category, captured_at="2026-01-01T09:00:00")
+        for category in categories
+    ]
+    return visit
+
+
+def test_category_breakdown_all_five_present():
+    present, missing = category_breakdown(_fake_visit(_FULL_CATEGORIES))
+
+    assert present == sorted(_FULL_CATEGORIES)
+    assert missing == []
+
+
+def test_category_breakdown_some_missing():
+    present, missing = category_breakdown(_fake_visit(_PARTIAL_CATEGORIES))
+
+    assert present == sorted(_PARTIAL_CATEGORIES)
+    assert missing == ["earth_pit_chamber", "earth_pit_open_with_rod"]
+
+
+def test_category_breakdown_none_present():
+    present, missing = category_breakdown(_fake_visit([]))
+
+    assert present == []
+    assert missing == sorted(_FULL_CATEGORIES)
+
+
+def test_is_compliant_matches_category_breakdown():
+    assert is_compliant(_fake_visit(_FULL_CATEGORIES)) is True
+    assert is_compliant(_fake_visit(_PARTIAL_CATEGORIES)) is False
+    assert is_compliant(_fake_visit([])) is False
+
+
 def test_district_dashboard_reports_compliance_percent_for_active_pops_only(
     client, db_session
 ):
@@ -158,10 +198,46 @@ def test_district_dashboard_reports_compliance_percent_for_active_pops_only(
         assert chennai["compliant_pops"] == 1
         assert chennai["compliance_percent"] == round(1 / 3 * 100, 1)
 
+        # Completed-vs-pending: 2 of the 3 active Chennai POPs have a
+        # synced visit this fortnight (one full, one partial) - that is
+        # "completed" regardless of category completeness, which is a
+        # separate axis (is_compliant / categories_present/missing).
+        assert chennai["completed_pops"] == 2
+        assert chennai["pending_pops"] == 1
+
+        pops_by_code = {p["pop_code"]: p for p in chennai["pops"]}
+
+        full = pops_by_code["POP-CHN-001"]
+        assert full["status"] == "completed"
+        assert full["is_compliant"] is True
+        assert full["latest_visit_id"] == "dash-visit-1"
+        assert full["categories_present"] == sorted(_FULL_CATEGORIES)
+        assert full["categories_missing"] == []
+
+        partial = pops_by_code["POP-CHN-003"]
+        assert partial["status"] == "completed"  # visited, just not compliant
+        assert partial["is_compliant"] is False
+        assert partial["latest_visit_id"] == "dash-visit-2"
+        assert partial["categories_present"] == sorted(_PARTIAL_CATEGORIES)
+        assert partial["categories_missing"] == ["earth_pit_chamber", "earth_pit_open_with_rod"]
+
+        never_visited = pops_by_code["POP-CHN-004"]
+        assert never_visited["status"] == "pending"
+        assert never_visited["is_compliant"] is False
+        assert never_visited["latest_visit_id"] is None
+        assert never_visited["categories_present"] == []
+        assert never_visited["categories_missing"] == sorted(_FULL_CATEGORIES)
+
+        # The inactive POP must not appear in the per-POP breakdown at all.
+        assert "POP-CHN-002" not in pops_by_code
+
         madurai = next(d for d in body["districts"] if d["district_name"] == "Madurai")
         assert madurai["total_active_pops"] == 1
         assert madurai["compliant_pops"] == 0
         assert madurai["compliance_percent"] == 0.0
+        assert madurai["completed_pops"] == 0
+        assert madurai["pending_pops"] == 1
+        assert madurai["pops"][0]["status"] == "pending"
     finally:
         _clear_drive_override()
 
@@ -269,11 +345,17 @@ def test_pop_visit_history_is_most_recent_first_and_flags_compliance(client, db_
         assert response.status_code == 200
         visits = response.json()
         assert visits[0]["visit_id"] == "dash-history-newer"
+        assert visits[0]["status"] == "completed"
         assert visits[0]["is_compliant"] is True
         assert visits[0]["photo_count"] == 5
+        assert visits[0]["categories_present"] == sorted(_FULL_CATEGORIES)
+        assert visits[0]["categories_missing"] == []
         assert visits[1]["visit_id"] == "dash-history-older"
+        assert visits[1]["status"] == "completed"
         assert visits[1]["is_compliant"] is False
         assert visits[1]["photo_count"] == 3
+        assert visits[1]["categories_present"] == sorted(_PARTIAL_CATEGORIES)
+        assert visits[1]["categories_missing"] == ["earth_pit_chamber", "earth_pit_open_with_rod"]
         assert visits[0]["employee_id"] == "ENG001"
         assert visits[0]["employee_name"] == "Dev Test Engineer"
     finally:

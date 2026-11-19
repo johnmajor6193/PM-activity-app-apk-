@@ -478,15 +478,17 @@ a later phase per the top-level README); this module is the data API
 it will eventually call.
 
 - **`GET /api/v1/dashboard/districts?date=YYYY-MM-DD`** — for each
-  District, how many of its *active* POPs received at least one
-  **fully compliant** visit (see below) in the fortnight containing
-  `date` (defaults to today), and the resulting compliance %.
+  District, its active POPs broken down individually (see "Completed
+  vs pending" below), plus the resulting aggregate counts and
+  compliance % for the fortnight containing `date` (defaults to today).
 - **`GET /api/v1/dashboard/engineers?date=YYYY-MM-DD`** — for each
   active Employee, how many visits they synced in that fortnight, and
   how many were fully compliant. Every active employee is listed,
   including zero-visit ones.
 - **`GET /api/v1/dashboard/pops/{pop_id}/visits`** — every synced visit
-  for one POP, most recent first. Not windowed to a fortnight.
+  for one POP, most recent first, each with its full category
+  breakdown (see "Photo/category breakdown" below). Not windowed to a
+  fortnight.
 
 **"Fully compliant" means all 5 mandatory categories were actually
 persisted for that visit** (`PmPhoto.category` covers
@@ -496,6 +498,53 @@ endpoint itself does not enforce category completeness (that
 validation lives in the mobile app, `PmVisitController.
 allPhotosValidForSubmission`); this is **not** geofence validation and
 never involves a POP coordinate, consistent with every other module.
+
+### Completed vs pending (per-POP, per fortnight)
+
+Each district's response includes a `pops` list (`PopPeriodStatusOut`,
+`backend/app/schemas/dashboard.py`), one entry per active POP, each
+with a `status` of `"completed"` or `"pending"`:
+
+- **`"completed"`** — this POP has *at least one* successfully synced
+  `PmVisit` in the queried fortnight. This is the **only** positive
+  signal the backend can produce — "a visit was persisted" — per the
+  principle that only states the existing data actually supports are
+  exposed, nothing invented.
+- **`"pending"`** — this POP has **no** synced visit at all in the
+  period. The district-level `completed_pops`/`pending_pops` counts
+  (new, alongside the existing `compliant_pops`/`compliance_percent`,
+  which still mean 5/5 categories specifically) are the aggregate of
+  this same per-POP flag.
+
+**Documented limitation, not solved here**: `"pending"` means only
+"no synced visit yet" — it cannot distinguish an engineer currently
+capturing this POP, one who hasn't started it at all, or one whose
+sync failed and is waiting to retry. The mobile app's own
+`draft`/`inProgress`/`readyForSubmission`/`pendingSync`/`syncFailed`
+states (see "Offline Storage & Synchronization" and "PM Visit
+Submission and Validation" above) are **never transmitted to the
+backend** — only a *successful* sync ever reaches it at all. Telling
+these apart on the dashboard would require the mobile app to
+additionally report a visit-start (or sync-attempt) event to the
+backend, which does not exist today; this is a real dependency on
+future mobile-side work, not a gap papered over with fake data here.
+
+An engineer-level "pending POPs" equivalent is **not** provided: there
+is no POP-to-employee assignment model in this system (`Employee.
+assigned_district_name` is a plain string, not a roster of POPs), so
+"POPs pending for this engineer" cannot be computed without inventing
+one — out of scope here.
+
+### Photo/category breakdown
+
+Both the per-POP entries above and every entry in `GET
+/dashboard/pops/{pop_id}/visits` (`PopVisitOut`) now include
+`categories_present`/`categories_missing` — the exact mandatory
+categories (sorted) found or not found among that visit's `PmPhoto`
+rows (`app/services/compliance.py:category_breakdown`). A `"pending"`
+POP has `categories_present: []` and all 5 in `categories_missing`,
+since there is no visit to check. This sits alongside, not in place
+of, `is_compliant` (which stays exactly "all 5 present").
 
 **Fortnight definition — resolves Open Decision #4 below**: calendar
 fortnights, the 1st–15th and the 16th–end-of-month, chosen over a
