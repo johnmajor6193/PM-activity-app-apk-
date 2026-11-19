@@ -347,7 +347,10 @@ an actual Android device/emulator this environment does not have):
     about GPS capture, the watermark, offline storage, or sync status
     looks or behaves differently.
 
-No geofencing or MIS export exists yet.
+No geofencing exists yet. Monthly MIS / Excel export is implemented
+**backend-only** (`GET /api/v1/mis/export`, see `backend/README.md`
+and `docs/data-model.md`) — nothing in `mobile_app/` consumes it yet;
+no "Download MIS Report" button exists in this app.
 
 ## Android Project
 

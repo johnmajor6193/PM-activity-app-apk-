@@ -10,7 +10,7 @@ python-jose[cryptography]>=3.3,<4.0
 python-multipart>=0.0.9,<1.0 # required by FastAPI to parse multipart/form-data (the Drive sync upload endpoint)
 google-api-python-client>=2.100,<3.0 # Google Drive v3 API client
 google-auth>=2.23,<3.0 # service-account credential loading
+openpyxl>=3.1,<4.0 # Monthly MIS / Excel export (.xlsx)
 
 # Planned for later steps (not required yet):
 # passlib[bcrypt]             - password hashing (if OTP flow needs it)
-# openpyxl                    - Excel/MIS export

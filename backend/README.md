@@ -1,8 +1,8 @@
 # backend — TANFINET POP PM Monitoring API (FastAPI)
 
 REST API backend: employee auth, District/Block/GP/POP master data, PM
-visit records (GPS, timestamps, photo metadata, Google Drive links), and
-later, compliance dashboards and MIS export.
+visit records (GPS, timestamps, photo metadata, Google Drive links),
+compliance dashboards, and Monthly MIS / Excel export.
 
 ## Structure
 
@@ -20,7 +20,8 @@ app/
 │           ├── auth.py        # POST /auth/login (implemented, public)
 │           ├── locations.py   # District/Block/GP/POP hierarchy (implemented, protected)
 │           ├── visits.py      # POST /visits/{id}/sync - Google Drive upload + PmVisit persistence (implemented, protected)
-│           └── dashboard.py   # GET /dashboard/districts, /engineers, /pops/{id}/visits (implemented, protected)
+│           ├── dashboard.py   # GET /dashboard/districts, /engineers, /pops/{id}/visits (implemented, protected)
+│           └── mis.py         # GET /mis/export - monthly CSV/Excel MIS report (implemented, protected)
 ├── models/
 │   ├── employee.py          # Employee ORM model (implemented)
 │   ├── district.py, block.py, grama_panchayat.py, pop.py  # location hierarchy (implemented)
@@ -48,7 +49,8 @@ app/
 │   ├── fake_drive_upload_service.py     # FakeDriveUploadService: in-memory, for tests
 │   └── __init__.py               # get_drive_upload_service() factory, keyed on settings.google_service_account_file
 ├── services/pm_visits.py     # record_synced_visit() - persists a visit only after its Drive upload succeeds
-└── services/compliance.py    # fortnight_bounds() + district/engineer/POP compliance aggregation, see "Dashboard" below
+├── services/compliance.py    # fortnight_bounds() + district/engineer/POP compliance aggregation, see "Dashboard" below
+└── services/mis_export.py    # month_bounds() + build_mis_rows()/rows_to_csv()/rows_to_xlsx(), see "Monthly MIS / Excel Export" below
 tests/
 ├── conftest.py            # points the app at an isolated SQLite file; `client`/`db_session`/`auth_headers`/`seeded_pop_id` fixtures
 ├── test_health.py
@@ -56,7 +58,8 @@ tests/
 ├── test_auth_dependency.py   # get_current_employee JWT verification: valid/missing/malformed/expired/wrong-claims
 ├── test_locations.py         # hierarchy listing, active-only filtering, POP detail, 404s, anonymous rejection
 ├── test_drive_sync.py        # upload success/failure/retry/idempotency, folder path, file naming, auth, PmVisit persistence
-└── test_dashboard.py         # fortnight_bounds unit tests + district/engineer/POP dashboard endpoints
+├── test_dashboard.py         # fortnight_bounds unit tests + district/engineer/POP dashboard endpoints
+└── test_mis_export.py        # month_bounds unit tests + row building (filters, multiple visits, pending rows) + CSV/XLSX serialization + endpoint
 ```
 
 ## Status
@@ -96,8 +99,15 @@ report fortnightly compliance — see "Dashboard" below. A mobile
 (Flutter) Dashboard UI now consumes these endpoints (see
 `mobile_app/README.md`); a separate **web** admin dashboard remains a
 later phase per the top-level README, and this same data API is what
-it will eventually call too. Monthly MIS/Excel export is a separate
-module, not built yet.
+it will eventually call too.
+
+**Monthly MIS / Excel export is implemented.**
+`GET /api/v1/mis/export?year=&month=&format=csv|xlsx` exports every
+synced visit for the month, plus a `Pending` row per unvisited active
+POP, as a real downloadable CSV or Excel file — see "Monthly MIS /
+Excel Export" below. There is no UI for this yet (no "Download MIS
+Report" button in the mobile app, and no web page) — the endpoint
+itself is the deliverable for this step.
 
 `Employee.assigned_district_name` remains a plain string (not a `District`
 FK) — Employee Login was kept unchanged while building this module; see
@@ -358,8 +368,7 @@ schema this reads.
 **A mobile Dashboard UI now consumes these endpoints** — see
 `mobile_app/README.md` ("Dashboard") and
 `mobile_app/lib/features/dashboard/`. A separate **web** admin
-dashboard remains a later phase; nothing in this step adds an
-Excel/MIS export.
+dashboard remains a later phase.
 
 **Known scale limitation**: both the district and engineer endpoints
 load every `PmVisit` row and filter/aggregate in Python, not SQL. Fine
@@ -375,6 +384,38 @@ curl -H "Authorization: Bearer $TOKEN" \
 curl -H "Authorization: Bearer $TOKEN" \
   http://127.0.0.1:8000/api/v1/dashboard/pops/1/visits
 ```
+
+### Monthly MIS / Excel Export
+
+One protected endpoint (JWT-required, same as `/dashboard/*`):
+`GET /api/v1/mis/export?year=YYYY&month=MM`. Returns a real
+downloadable file (`Content-Disposition: attachment`), not JSON:
+`format=csv` (default) or `format=xlsx`. One row per successfully
+synced visit that month, plus one `Pending` row per active POP
+(within any filter given) that received none — see
+`docs/data-model.md` ("Monthly MIS / Excel Export") for the full
+column list and the one documented limitation ("Sync Status" always
+mirrors "Visit Status" today, since the backend only ever learns of a
+visit once it has already synced).
+
+Optional filters, any combination: `district_id`, `block_id`, `gp_id`,
+`pop_id`, `employee_id` (the employee's `employee_code`, e.g.
+`ENG001` — suppresses `Pending` rows, since "this employee didn't
+visit" isn't the same claim as "nobody visited"). An unmatched filter
+returns a header-only file, not a 404.
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8000/api/v1/mis/export?year=2026&month=11&format=csv" \
+  -o mis_export_2026-11.csv
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8000/api/v1/mis/export?year=2026&month=11&format=xlsx&district_id=1" \
+  -o mis_export_2026-11_chennai.xlsx
+```
+
+No UI consumes this yet (no "Download MIS Report" button in the
+mobile app, no web page) — the endpoint itself is this step's
+deliverable.
 
 ## Running locally
 

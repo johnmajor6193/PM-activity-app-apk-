@@ -562,9 +562,91 @@ successfully synced visit, no production data yet) but would need
 revisiting — an indexed/SQL-side date filter — before a large volume
 of visits makes an in-Python scan too slow.
 
-**Monthly MIS / Excel export is a separate, not-yet-built module** —
-only the JSON dashboard data API above exists; no tabular export
-exists yet.
+**Monthly MIS / Excel export is implemented** — see "Monthly MIS /
+Excel Export" below.
+
+## Monthly MIS / Excel Export
+
+Implementation: `backend/app/services/mis_export.py`,
+`backend/app/api/v1/endpoints/mis.py`. Protected the same way as
+`/dashboard/*` (`get_current_employee`). Reads only the same
+`PmVisit`/`PmPhoto` data the Dashboard already reads and reuses its
+`is_compliant`/`category_breakdown` helpers unchanged — this is a
+different *shape* of the same data (a flat, downloadable file instead
+of a JSON summary), not a new data source or a new compliance rule.
+
+**`GET /api/v1/mis/export?year=YYYY&month=MM`** — one row per
+successfully synced PM visit in that calendar month, plus one
+`Pending` row for every *active* POP (within any geographic filter
+given) that received none that month — the same completed/pending
+concept the Dashboard already uses (see "Completed vs pending"
+above), just at monthly instead of fortnightly grain. A POP visited
+twice in the month gets two rows: this is a ledger of real events, not
+a POP-level summary, so nothing is deduplicated or averaged away.
+
+**Columns** (`app/services/mis_export.py:COLUMNS`, in this exact
+order): Visit ID, Visit Date, Employee ID, Employee Name, District,
+Block, GP, POP Code, POP Name, Visit Status (`Completed`/`Pending`),
+Categories Present, Categories Missing, Overall Compliance
+(`Compliant`/`Incomplete`, blank for `Pending` rows), Sync Status
+(`Synced`/`Not Synced`), First Synced At, Last Synced At. Every
+column is read directly from `PmVisit`/`PmPhoto`/`Employee`/`Pop`/
+`GramaPanchayat`/`Block`/`District`, or derived the same way the
+Dashboard already derives it — nothing is invented, and `Visit ID` was
+added beyond the originally-requested column list only because it is
+real, already-persisted data useful for tracing a row back to its
+Google Drive folder (which is named after the same id).
+
+**Known limitation — "Sync Status" currently always mirrors "Visit
+Status"** (`Synced` ⟺ `Completed`, `Not Synced` ⟺ `Pending`): a
+`PmVisit` row is only ever written *after* its Drive upload has
+already succeeded (see "Backend PmVisit / PmPhoto" above), so the
+backend has no visible intermediate, failed, or offline sync state to
+report as a genuinely independent value — those exist only on the
+mobile device and are never transmitted. The column is still included
+because it was explicitly requested, not because today's data
+supports a richer answer than Visit Status already gives.
+
+**Not included, because it wasn't in the requested column list and
+would need deciding how to flatten multiple values per row**: the
+per-photo Google Drive file links (`PmPhoto.drive_file_id`/
+`drive_file_link`) exist in the data model and could be added later
+(e.g. one combined column, or one per category) if O&M management
+wants direct links to the evidence photos from the report itself.
+
+**Filtering**: `district_id`, `block_id`, `gp_id`, `pop_id` (any
+combination, matching the existing District→Block→GP→POP hierarchy
+exactly) and `employee_id` (the employee's `employee_code`, e.g.
+`ENG001`). Setting `employee_id` suppresses `Pending` rows entirely:
+"employee X didn't visit POP Y" is not the same claim as "POP Y was
+not visited by anyone," so an employee-scoped export reports only
+that employee's actual visits. An unmatched filter combination (an
+unknown id, or an employee with no visits that month) returns a
+report with only the header row — not a 404 — since several
+independent optional filters can combine, and "nothing matched" is a
+normal result, not an error.
+
+**Format**: `format=csv` (default) or `format=xlsx`
+(`openpyxl`, now a real dependency — see `backend/requirements.txt`).
+Both are built from the exact same row data; only the serialization
+differs. The response sets `Content-Disposition: attachment` with a
+`mis_export_<year>-<month>.<ext>` filename, so it downloads as a real
+file in a browser or any HTTP client — this is what makes it "usable
+as an Excel/CSV-style MIS report," not just another JSON endpoint.
+
+**"Monthly" vs the Dashboard's "fortnightly"**: these are two
+different, both previously documented granularities for two different
+purposes — fortnightly *compliance* checking (has this POP been
+visited this fortnight) vs. monthly *management* reporting (every
+visit and every gap across the whole month, which spans two
+fortnights) — not a new or conflicting period rule.
+`app/services/mis_export.py:month_bounds` is the one place "a month"
+is defined for this module, parallel to `compliance.py:fortnight_bounds`.
+
+**No UI for this yet** — `GET /api/v1/mis/export` is the data/file
+endpoint; a "Download MIS Report" button in the mobile app, or a web
+admin page, would consume it exactly as a browser does today, but
+neither exists yet.
 
 ## Dashboard UI (mobile)
 
