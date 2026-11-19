@@ -178,18 +178,24 @@ remaining limitation, not claimed as done — see `mobile_app/README.md`
 ("Dashboard UI verification") for the full PASS/BLOCKED breakdown and
 the manual steps to run that pass.
 
-**Monthly MIS / Excel export is implemented, backend only.**
+**Monthly MIS / Excel export is implemented, backend and mobile UI.**
 `GET /api/v1/mis/export?year=&month=&format=csv|xlsx` returns a real
 downloadable file: one row per synced visit that month, plus a
 `Pending` row per unvisited active POP, with Visit Date, Employee,
 District/Block/GP/POP, Visit Status, Category Compliance, Overall
 Compliance, Sync Status, and timestamps — reusing the exact same
 `PmVisit`/`PmPhoto` data and compliance logic the Dashboard already
-uses, filterable by the same geographic hierarchy plus employee. No
-mobile/web UI consumes this yet — see `backend/README.md` and
-`docs/data-model.md` ("Monthly MIS / Excel Export") for the full
-column list and its one documented limitation (Sync Status currently
-always mirrors Visit Status).
+uses, filterable by the same geographic hierarchy plus employee — see
+`backend/README.md` and `docs/data-model.md` ("Monthly MIS / Excel
+Export") for the full column list and its one documented limitation
+(Sync Status currently always mirrors Visit Status). The Flutter
+app's `DashboardScreen` now has a "Download MIS Report" AppBar action
+that calls this exact endpoint (`format=xlsx`, current device month)
+over the same JWT session as every other request, and saves the file
+to on-device app storage with clear loading/success/error feedback —
+see `mobile_app/README.md` ("Download MIS Report") for the full
+design and its one remaining device-only limitation (confirming the
+saved file's real-device discoverability).
 
 No geofencing has been implemented — it remains deferred until
 official POP coordinate master data is supplied (see "POP
@@ -202,7 +208,7 @@ generated for real with `flutter create .` (Flutter 3.50.0 / Dart
 3.14.0), not hand-written, and the required Android permissions
 (`CAMERA`, `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`,
 `ACCESS_NETWORK_STATE`) are set in its manifest. `flutter pub get`,
-`flutter analyze` (0 errors/warnings), and `flutter test` (100/100
+`flutter analyze` (0 errors/warnings), and `flutter test` (115/115
 passing) have all been run and verified, alongside the backend's own
 `pytest` suite (92/92 passing) — see `mobile_app/README.md` and
 `backend/README.md` for exact commands and which tests are genuinely

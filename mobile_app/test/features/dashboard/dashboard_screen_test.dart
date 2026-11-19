@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobile_app/features/dashboard/data/mis_report_download_service.dart';
 import 'package:mobile_app/features/dashboard/domain/dashboard_failure.dart';
 import 'package:mobile_app/features/dashboard/domain/entities/district_compliance.dart';
 import 'package:mobile_app/features/dashboard/domain/entities/engineer_performance.dart';
@@ -8,6 +9,7 @@ import 'package:mobile_app/features/dashboard/domain/entities/pop_visit_entry.da
 import 'package:mobile_app/features/dashboard/domain/repositories/dashboard_repository.dart';
 import 'package:mobile_app/features/dashboard/presentation/dashboard_controller.dart';
 import 'package:mobile_app/features/dashboard/presentation/dashboard_screen.dart';
+import 'package:mobile_app/features/dashboard/presentation/mis_report_controller.dart';
 import 'package:mobile_app/features/dashboard/presentation/pop_visit_history_screen.dart';
 
 /// Widget-level verification for DashboardScreen: this is the part of
@@ -76,6 +78,24 @@ class _FakeDashboardRepository implements DashboardRepository {
 
   @override
   Future<List<PopVisitEntry>> getPopVisitHistory(int popId) async => [];
+}
+
+/// In-memory stand-in for [MisReportDownloadService], for the
+/// "Download MIS Report" button's widget tests — same purpose as
+/// [_FakeDashboardRepository] above, just for the download action.
+class _FakeMisReportDownloadService implements MisReportDownloadService {
+  bool shouldFail = false;
+  Duration delay = Duration.zero;
+  String pathToReturn = '/data/app/mis_reports/mis_export_2026-11.xlsx';
+
+  @override
+  Future<String> downloadMonthlyReport({int? year, int? month}) async {
+    if (delay > Duration.zero) await Future<void>.delayed(delay);
+    if (shouldFail) {
+      throw const DashboardFailure('Could not reach the server. Check your connection and try again.');
+    }
+    return pathToReturn;
+  }
 }
 
 PopPeriodStatus _compliantPop() => const PopPeriodStatus(
@@ -351,5 +371,95 @@ void main() {
 
     expect(find.text('District Number 9'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Download MIS Report button: idle, tap shows loading, then a success message', (
+    tester,
+  ) async {
+    _useMobileScreenSize(tester);
+    final repository = _FakeDashboardRepository();
+    final downloadService = _FakeMisReportDownloadService()..delay = const Duration(milliseconds: 300);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DashboardScreen(
+          controller: DashboardController(repository: repository),
+          misReportController: MisReportController(downloadService: downloadService),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Download MIS Report'), findsOneWidget);
+    expect(find.byIcon(Icons.download), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Download MIS Report'));
+    await tester.pump();
+
+    // Loading: the download icon swaps for a spinner inside the button.
+    expect(find.byIcon(Icons.download), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsWidgets);
+
+    await tester.pumpAndSettle();
+
+    // Success: the icon reverts and a clear success message is shown.
+    expect(find.byIcon(Icons.download), findsOneWidget);
+    expect(
+      find.text('MIS report saved to /data/app/mis_reports/mis_export_2026-11.xlsx'),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Download MIS Report button: shows a clear error message on failure', (tester) async {
+    _useMobileScreenSize(tester);
+    final repository = _FakeDashboardRepository();
+    final downloadService = _FakeMisReportDownloadService()..shouldFail = true;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DashboardScreen(
+          controller: DashboardController(repository: repository),
+          misReportController: MisReportController(downloadService: downloadService),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Download MIS Report'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Could not reach the server. Check your connection and try again.'),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.download), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Download MIS Report button is disabled while a download is in flight', (tester) async {
+    _useMobileScreenSize(tester);
+    final repository = _FakeDashboardRepository();
+    final downloadService = _FakeMisReportDownloadService()..delay = const Duration(milliseconds: 300);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DashboardScreen(
+          controller: DashboardController(repository: repository),
+          misReportController: MisReportController(downloadService: downloadService),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Download MIS Report'));
+    await tester.pump();
+
+    final button = tester.widget<IconButton>(
+      find.ancestor(of: find.byTooltip('Download MIS Report'), matching: find.byType(IconButton)),
+    );
+    expect(button.onPressed, isNull);
+
+    await tester.pumpAndSettle();
   });
 }

@@ -33,6 +33,7 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^3.0.0
   sqflite_common_ffi: ^2.3.4 # real SQLite (via FFI) for testing the repository without a device
+  path_provider_platform_interface: ^2.1.2 # fakes the path_provider platform channel in tests, no device needed
 
 flutter:
   uses-material-design: true

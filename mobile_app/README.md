@@ -30,10 +30,10 @@ lib/
 │   │   ├── domain/            # PmVisitRepository + DriveUploadService interfaces, PmVisit/PmPhotoRecord/GpsReading/PhotoCategory/VisitSyncStatus (+ GpsReadingValidation/PmPhotoRecordValidation extensions)
 │   │   └── presentation/      # PmVisitController (submitVisit), PmVisitScreen, PmVisitSubmissionScreen (Review & Submit)
 │   ├── sync/                 # reserved (e.g. background/scheduled sync) - the sync queue, state model, and Drive upload all ended up living in pm_visit/ instead, see above
-│   └── dashboard/            # District/Engineer/POP-wise compliance dashboard (implemented; see "Dashboard" below)
-│       ├── data/              # DashboardApiClient, DashboardRepositoryImpl
+│   └── dashboard/            # District/Engineer/POP-wise compliance dashboard + "Download MIS Report" (implemented; see "Dashboard" below)
+│       ├── data/              # DashboardApiClient, DashboardRepositoryImpl, MisExportApiClient, MisReportDownloadService
 │       ├── domain/            # DashboardRepository interface, DistrictCompliance/PopPeriodStatus/EngineerPerformance/PopVisitEntry, DashboardFailure
-│       └── presentation/      # DashboardController, DashboardScreen, PopVisitHistoryController, PopVisitHistoryScreen
+│       └── presentation/      # DashboardController, DashboardScreen, PopVisitHistoryController, PopVisitHistoryScreen, MisReportController
 └── shared/
     ├── widgets/               # reusable UI components
     └── models/                # shared data models
@@ -347,10 +347,40 @@ an actual Android device/emulator this environment does not have):
     about GPS capture, the watermark, offline storage, or sync status
     looks or behaves differently.
 
-No geofencing exists yet. Monthly MIS / Excel export is implemented
-**backend-only** (`GET /api/v1/mis/export`, see `backend/README.md`
-and `docs/data-model.md`) — nothing in `mobile_app/` consumes it yet;
-no "Download MIS Report" button exists in this app.
+No geofencing exists yet.
+
+**"Download MIS Report" is implemented.** `DashboardScreen`'s AppBar
+has a download action that calls the existing, unmodified
+`GET /api/v1/mis/export?year=&month=&format=xlsx` endpoint (see
+`backend/README.md` and `docs/data-model.md`, "Monthly MIS / Excel
+Export") for the current device month, reusing the same
+`AuthSession`-held JWT as every other request — no new login flow or
+token handling. `MisExportApiClient` (new, alongside
+`DashboardApiClient`, kept separate because this endpoint returns
+binary `.xlsx` bytes rather than JSON) fetches the raw bytes;
+`MisReportDownloadService` saves them to this app's private
+on-device storage (`<app documents dir>/mis_reports/mis_export_<year>-<month>.xlsx`),
+the same `path_provider` pattern `camera_capture_service.dart` already
+uses for PM visit photos — no new dependency, no new storage
+permission. `MisReportController` drives idle → downloading → success
+(or error) state: the button shows a spinner and disables itself while
+a download is in flight, and a `SnackBar` reports either the saved
+file path on success or a clear message (network/server failure) on
+error. Nothing about GPS, photo capture, watermark, offline storage,
+PM Visit submission, Google Drive sync, or the existing dashboard
+tabs/compliance logic was touched — this is a strictly additive
+feature (new files, plus one new AppBar action and an optional
+`misReportController` test-injection parameter on `DashboardScreen`).
+
+The one thing this environment cannot verify: how the saved file
+actually surfaces to the user on a real Android device — e.g. whether
+it's visible in a file manager or needs a system "share"/"open" action
+to reach the user-facing Downloads folder. The file is written to the
+app's private storage (matching this project's existing on-device
+storage pattern), which is correct and real, but confirming end-user
+*discoverability* of that file needs a real device/emulator, which
+this environment does not have — see "Dashboard UI verification"
+above for the same standing limitation.
 
 ## Android Project
 
@@ -431,6 +461,9 @@ flutter test --concurrency=1 \
   test/features/dashboard/pop_visit_history_controller_test.dart \
   test/features/dashboard/dashboard_screen_test.dart \
   test/features/dashboard/pop_visit_history_screen_test.dart \
+  test/features/dashboard/mis_export_api_client_test.dart \
+  test/features/dashboard/mis_report_download_service_test.dart \
+  test/features/dashboard/mis_report_controller_test.dart \
   test/features/auth/profile_screen_dashboard_navigation_test.dart
 ```
 
@@ -449,6 +482,14 @@ test has no platform channel:
   factory) points it at a temp file instead of asking `path_provider`
   for one, since `path_provider` itself needs a platform channel these
   tests don't have. Real schema, real SQL, real row mapping.
+- `mis_report_download_service_test.dart` takes a different route to
+  the same problem: rather than adding a path-skipping constructor, it
+  sets `PathProviderPlatform.instance` (from the transitive
+  `path_provider_platform_interface` package, now a declared dev
+  dependency) to a fake that returns a real temp directory. The
+  service's actual `dart:io` file-write logic then runs for real
+  against that directory — genuinely exercising
+  `MisReportDownloadService`, not a stand-in for it.
 
 `sync_manager_test.dart` tests `SyncManager`'s own orchestration logic
 (status transitions, retry, "don't touch anything without a

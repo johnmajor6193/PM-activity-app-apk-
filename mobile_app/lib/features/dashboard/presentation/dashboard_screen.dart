@@ -5,6 +5,7 @@ import '../domain/entities/district_compliance.dart';
 import '../domain/entities/engineer_performance.dart';
 import '../domain/entities/pop_period_status.dart';
 import 'dashboard_controller.dart';
+import 'mis_report_controller.dart';
 import 'pop_visit_history_screen.dart';
 
 /// Compliance dashboard: District-wise and Engineer-wise summaries for
@@ -12,9 +13,17 @@ import 'pop_visit_history_screen.dart';
 /// breakdown drill-down under each district. Reads only the existing,
 /// already-implemented `/api/v1/dashboard/*` endpoints — no mock data,
 /// and the same JWT session as every other screen (see
-/// core/network/auth_session.dart) is reused automatically.
+/// core/network/auth_session.dart) is reused automatically. The AppBar
+/// download action calls the existing, already-implemented
+/// `/api/v1/mis/export` endpoint (see mis_report_controller.dart) and
+/// saves the resulting .xlsx to on-device storage.
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key, DashboardController? controller}) : _injectedController = controller;
+  const DashboardScreen({
+    super.key,
+    DashboardController? controller,
+    MisReportController? misReportController,
+  }) : _injectedController = controller,
+       _injectedMisReportController = misReportController;
 
   /// Lets tests supply a [DashboardController] backed by a fake
   /// repository, instead of the real HTTP-backed one this screen
@@ -24,12 +33,17 @@ class DashboardScreen extends StatefulWidget {
   /// (real) behavior is unchanged when omitted.
   final DashboardController? _injectedController;
 
+  /// Same testability seam as [_injectedController], for the
+  /// "Download MIS Report" button's [MisReportController].
+  final MisReportController? _injectedMisReportController;
+
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
   late final DashboardController _controller;
+  late final MisReportController _misReportController;
 
   @override
   void initState() {
@@ -37,16 +51,37 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _controller = widget._injectedController ?? DashboardController();
     _controller.addListener(_onChanged);
     _controller.loadAll();
+
+    _misReportController = widget._injectedMisReportController ?? MisReportController();
+    _misReportController.addListener(_onMisReportChanged);
   }
 
   @override
   void dispose() {
     _controller.removeListener(_onChanged);
     _controller.dispose();
+    _misReportController.removeListener(_onMisReportChanged);
+    _misReportController.dispose();
     super.dispose();
   }
 
   void _onChanged() => setState(() {});
+
+  void _onMisReportChanged() {
+    setState(() {});
+    if (!mounted) {
+      return;
+    }
+    if (_misReportController.status == MisReportStatus.success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('MIS report saved to ${_misReportController.savedFilePath}')),
+      );
+    } else if (_misReportController.status == MisReportStatus.error) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_misReportController.errorMessage ?? 'Could not download the MIS report.')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -55,6 +90,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Compliance Dashboard'),
+          actions: [
+            IconButton(
+              icon: _misReportController.isDownloading
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.download),
+              tooltip: 'Download MIS Report',
+              onPressed: _misReportController.isDownloading
+                  ? null
+                  : _misReportController.downloadCurrentMonthReport,
+            ),
+          ],
           bottom: const TabBar(
             tabs: [
               Tab(text: 'Districts'),

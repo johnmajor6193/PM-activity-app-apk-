@@ -643,10 +643,9 @@ fortnights) — not a new or conflicting period rule.
 `app/services/mis_export.py:month_bounds` is the one place "a month"
 is defined for this module, parallel to `compliance.py:fortnight_bounds`.
 
-**No UI for this yet** — `GET /api/v1/mis/export` is the data/file
-endpoint; a "Download MIS Report" button in the mobile app, or a web
-admin page, would consume it exactly as a browser does today, but
-neither exists yet.
+**Mobile UI**: a "Download MIS Report" button now consumes this
+endpoint — see "MIS Report Download (mobile)" below. No web admin page
+consumes it yet.
 
 ## Dashboard UI (mobile)
 
@@ -712,6 +711,65 @@ preserves the offset and this does not occur. Not fixed here — it is
 a pre-existing backend/storage nuance, not something the dashboard UI
 work introduced, and correcting it means changing already-implemented/
 verified backend code, out of scope for a UI-only module.
+
+## MIS Report Download (mobile)
+
+Implementation: `mobile_app/lib/features/dashboard/` (same feature
+folder as the Dashboard, since the button lives on `DashboardScreen`
+and both read backend reporting data; no new top-level feature was
+created for one button).
+
+- **`MisExportApiClient`** (`data/`) — calls
+  `GET /api/v1/mis/export?year=&month=&format=xlsx` and returns the
+  raw response bytes on success. Kept separate from
+  `DashboardApiClient` because that client's shared `_get()` helper
+  always `jsonDecode`s the response body, which doesn't work for this
+  endpoint's binary `.xlsx` payload — rather than change `_get()`'s
+  behavior for every other caller, a second, small client was added.
+  Auth is identical: the same `AuthSession`-held JWT is attached as
+  `Authorization: Bearer <token>`, exactly as `DashboardApiClient`
+  already does.
+- **`MisReportDownloadService`** (`data/`) — calls
+  `MisExportApiClient.downloadXlsx`, then writes the bytes to
+  `<app documents dir>/mis_reports/mis_export_<year>-<month>.xlsx`
+  using `path_provider` + `dart:io`, the same on-device storage
+  pattern `camera_capture_service.dart` already uses for PM visit
+  photos — no new dependency, no new Android storage permission.
+  Returns the saved file's path.
+- **`MisReportController`** (`presentation/`) — a small
+  `ChangeNotifier` with an `idle`/`downloading`/`success`/`error`
+  status, mirroring `DashboardLoadStatus`'s shape. Holds
+  `savedFilePath` on success and `errorMessage` on failure.
+- **`DashboardScreen`** — gained one AppBar action ("Download MIS
+  Report"): a download icon that swaps for a small spinner and
+  disables itself while a download is in flight, and reports the
+  result via `SnackBar` — the saved file path on success, or a clear
+  message (reusing `DashboardFailure`'s messages, e.g. "Could not
+  reach the server. Check your connection and try again.") on
+  failure. The report always covers the device's current year/month;
+  no month picker was added since the task asked for the smallest
+  clean integration, not a new filter UI. `DashboardScreen` gained an
+  optional `misReportController` constructor parameter, the same
+  test-injection seam already used for its `controller` parameter.
+- **Not touched**: GPS/photo capture, the watermark, offline SQLite
+  storage, PM Visit submission, Google Drive sync, and the existing
+  Districts/Engineers tabs and their controller — this module only
+  adds new files plus one new AppBar action and controller field on
+  `DashboardScreen`.
+- **Verification**: `test/features/dashboard/mis_export_api_client_test.dart`
+  (request path/query/headers, success/error handling, against a fake
+  HTTP transport), `mis_report_download_service_test.dart` (real
+  `dart:io` file write against a real temp directory, via a fake
+  `PathProviderPlatform` — see `mobile_app/README.md` for why), and
+  `mis_report_controller_test.dart` (status transitions) — plus 3 new
+  `testWidgets` tests appended to `dashboard_screen_test.dart`
+  covering the button's idle/loading/success/error states and that it
+  disables itself mid-download. No Android device/emulator exists in
+  this environment (see "Dashboard UI verification" in
+  `mobile_app/README.md`), so confirming how the saved file actually
+  surfaces to the end user on a real device (file manager visibility,
+  or whether a "share"/"open" action is wanted to reach the
+  user-facing Downloads folder) remains unverified here.
 
 ## Open Decisions (to confirm before further backend implementation)
 
