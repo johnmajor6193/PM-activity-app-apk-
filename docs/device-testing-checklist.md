@@ -19,7 +19,99 @@ EXIF-orientation watermark issue). Both are called out at the exact
 checklist step where they matter — see "Pre-device-testing review
 (bug fix)" in `docs/data-model.md` for the full writeup.
 
-## 1. What's already verified vs. what needs a real device
+## 0. Device requirements
+
+**DEVICE TEST REQUIRED** for all of this — none of it can be verified
+in this sandboxed build environment (no Android SDK is installed
+here; confirmed via `flutter doctor`).
+
+- **Android version**: minimum **Android 7.0 (API 24)** —
+  `android/app/build.gradle.kts` uses Flutter's default
+  `flutter.minSdkVersion` (24) / `compileSdk`/`targetSdk` (36, Android
+  16). A device on Android 10+ is strongly preferred for this first
+  pass so camera/GPS permission-dialog behavior matches what most
+  real users will see; Android 7-9 will install and likely run, but
+  permission-flow wording differs by OS version and hasn't been
+  checked against anything that old.
+- **Hardware**: a working rear camera, GPS hardware, and either Wi-Fi
+  or mobile data reachable to the backend machine's LAN IP (same
+  Wi-Fi network is the simplest setup).
+- **Storage**: a few hundred MB free (APK + 5 photos/visit × original
+  + watermarked copies, uncompressed JPEGs).
+- **Settings**: "Install unknown apps" (a.k.a. "Install from unknown
+  sources") must be enabled for whichever app you use to open the
+  APK file (Files, Chrome, a USB-transfer app, etc.) — this build is
+  sideloaded, not from the Play Store. If installing via `adb`/
+  `flutter install` over USB, **Developer Options → USB debugging**
+  must be enabled instead, and no "unknown apps" toggle is needed.
+
+## 1. Build the APK
+
+Run this on a machine with the Android SDK installed (Android Studio,
+or `sdkmanager` command-line tools) — **not** this sandboxed
+environment, which has no Android SDK and cannot build or verify this
+step. **DEVICE/BUILD-MACHINE TEST REQUIRED.**
+
+```bash
+cd mobile_app
+flutter pub get
+
+# Replace with the backend machine's real LAN IP, reachable from the
+# phone's Wi-Fi/mobile network. 10.0.2.2 (the Flutter default) only
+# works for the Android *emulator*, never a real phone.
+flutter build apk --debug --dart-define=API_BASE_URL=http://<LAN-IP>:8000
+```
+
+Output: `build/app/outputs/flutter-apk/app-debug.apk`.
+
+A **debug** build is recommended for this first pass — better crash
+stack traces, no code-shrinking/minification surprises, and this
+project's `release` build type is currently signed with the debug
+keystore anyway (`android/app/build.gradle.kts`: "Signing with the
+debug keys for now" — fine for internal testing, **not** for Play
+Store distribution). If you specifically want to test release-mode
+performance later:
+
+```bash
+flutter build apk --release --dart-define=API_BASE_URL=http://<LAN-IP>:8000
+# Output: build/app/outputs/flutter-apk/app-release.apk
+```
+
+If the build fails, note the **exact** error — before this pass, only
+`flutter pub get`, `flutter analyze`, and `flutter test` have ever
+been run against this code; `flutter build apk` itself has never been
+run anywhere in this project, since no session so far has had an
+Android SDK. A build failure here would be a genuine, previously
+unknown blocker — report it rather than working around it.
+
+## 2. Install the APK
+
+Pick whichever is easiest:
+
+**A. Via USB + adb (fastest, works with a debug or release build):**
+```bash
+# Enable Developer Options -> USB debugging on the phone first,
+# connect via USB, accept the "allow USB debugging" prompt on-device.
+adb devices   # confirm the phone shows up as "device", not "unauthorized"
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
+```
+Or, equivalently, straight from source (builds + installs + launches
+in one step):
+```bash
+flutter run --debug --dart-define=API_BASE_URL=http://<LAN-IP>:8000
+```
+
+**B. Without a cable:** copy the APK to the phone (email attachment,
+cloud storage, USB file transfer in "file transfer" mode — not ADB),
+open it with a file manager, tap to install, and grant the "install
+unknown apps" permission for that app when prompted.
+
+Either way, the app will request Camera and Location permission the
+first time those features are used, not at install time (standard
+modern Android runtime-permission behavior) — this is expected, not a
+bug.
+
+## 3. What's already verified vs. what needs a real device
 
 | Area | Already verified (how) | Still needs a real device |
 |---|---|---|
@@ -44,28 +136,32 @@ cannot touch at all (`image_picker`, `geolocator`, real
 real Google Drive credentials — none of which have been exercised
 anywhere in this project until this pass.
 
-## 2. Setup
+## 4. Setup
 
-1. **Backend**: run it bound to all interfaces, not just localhost, so
-   the phone can reach it over Wi-Fi:
+### 4.1 Backend — must be ready before testing starts
+
+1. **Python 3.11+ and PostgreSQL** (tables are created automatically
+   on startup; no separate migration step). SQLite is only used by
+   the automated test suite, not for actually running the server.
    ```bash
    cd backend
+   python3 -m venv .venv && source .venv/bin/activate
+   pip install -r requirements.txt
+   cp .env.example .env   # edit DATABASE_URL to point at your Postgres instance
+   ```
+2. **Run bound to all interfaces**, not just localhost, so the phone
+   can reach it over Wi-Fi:
+   ```bash
    uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
    ```
-   Find the machine's LAN IP (e.g. `ipconfig`/`ifconfig`/`ip addr`).
-2. **Google Drive (optional)**: without `GOOGLE_SERVICE_ACCOUNT_FILE`
-   configured, Drive upload will deterministically fail with a clear
-   "Google Drive is not configured on this server" message — that's
-   expected and still lets you test everything up to the sync attempt.
-   To test a real upload, see `backend/README.md`
-   ("Google Drive Configuration").
-3. **Mobile app**: run pointed at that LAN IP (the default
-   `10.0.2.2` only works for the Android *emulator*, not a real phone):
-   ```bash
-   cd mobile_app
-   flutter run --dart-define=API_BASE_URL=http://<LAN-IP>:8000
-   ```
-4. **Demo accounts** (seeded automatically in dev mode):
+   Then find this machine's LAN IP (`ipconfig` / `ifconfig` / `ip addr`)
+   and confirm the backend is reachable from the phone's browser first:
+   `http://<LAN-IP>:8000/health` should return `{"status":"ok"}` (or
+   equivalent) before you even open the app.
+3. `AUTH_MODE` stays at its default, `dev` (Employee ID + mobile
+   number, no OTP) — nothing to configure for that.
+4. **Demo accounts** (seeded automatically on first startup against an
+   empty database — no manual seeding step):
    | Employee ID | Mobile Number | District |
    |---|---|---|
    | `ENG001` | `9876543210` | Chennai |
@@ -75,7 +171,48 @@ anywhere in this project until this pass.
    confirm inactive POPs are excluded/shown correctly where relevant),
    `POP-CHN-003` (active), `POP-CHN-004` (active).
 
-## 3. Login
+### 4.2 Google Drive — required only if testing a real upload
+
+**Without any Drive configuration**, `/visits/{id}/sync` always
+responds with a clear "Google Drive is not configured on this
+server" failure — this is expected, not a bug, and still lets you
+test the entire app up through the sync *attempt* (§10b below). This
+is sufficient for most of this checklist.
+
+**To test a real end-to-end Google Drive upload** (recommended at
+least once, since no session has ever done this for this project),
+have ready **before** testing starts:
+
+1. A Google Cloud project with the **Drive API enabled** and a
+   **service account** created in it, with a downloaded JSON key file.
+2. A **Shared Drive** (or a regular folder shared with the service
+   account's email address) that account has edit access to — service
+   accounts have no personal Drive storage quota, so this step is not
+   optional for a real test.
+3. The key file placed **outside this repository** (e.g.
+   `backend/credentials/google-drive-service-account.json` — already
+   `.gitignore`d), and these set on the backend before starting it:
+   ```bash
+   GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/google-drive-service-account.json
+   GOOGLE_DRIVE_PARENT_FOLDER_ID=<the Shared Drive or folder's id>
+   # GOOGLE_DRIVE_ROOT_FOLDER_NAME defaults to "TANFINET PM Monitoring" - optional to override
+   ```
+   See `backend/README.md` ("Google Drive Configuration") for exactly
+   how to get the Shared Drive/folder id.
+4. After setting these, restart the backend (`uvicorn ...`) before
+   running §10c — they're read once at process startup.
+
+### 4.3 Mobile app
+
+Run pointed at the backend's LAN IP (the default `10.0.2.2` only works
+for the Android *emulator*, never a real phone) — or just install the
+APK built in §1-2, which already has this baked in via `--dart-define`:
+```bash
+cd mobile_app
+flutter run --dart-define=API_BASE_URL=http://<LAN-IP>:8000
+```
+
+## 5. Login
 
 - [ ] App opens on the Employee Login screen.
 - [ ] Submitting empty fields shows validation errors, no crash.
@@ -87,7 +224,7 @@ anywhere in this project until this pass.
 - [ ] **Real keyboard**: numeric keyboard appears for the mobile number
       field (if configured), autofill/autocomplete doesn't break input.
 
-## 4. POP Selection (District → Block → GP → POP)
+## 6. POP Selection (District → Block → GP → POP)
 
 - [ ] District dropdown populates (Chennai, Madurai).
 - [ ] Selecting a District populates Blocks; selecting lower levels
@@ -99,7 +236,7 @@ anywhere in this project until this pass.
 - [ ] "Start PM Visit" and "View Visit History" buttons both work from
       the POP detail card.
 
-## 5. GPS / Location (real device only — never exercised before this)
+## 7. GPS / Location (real device only — never exercised before this)
 
 - [ ] First GPS request shows the real Android permission prompt.
 - [ ] Denying permission once, then granting it on retry, works.
@@ -112,11 +249,11 @@ anywhere in this project until this pass.
       a reasonable time and either succeeds or fails clearly — it
       must **never** substitute a fake/cached coordinate.
 - [ ] Time a real fix: if it regularly takes several seconds, try
-      backing out of the screen *during* that wait (see §9, the
+      backing out of the screen *during* that wait (see §11, the
       dispose-race fix) — confirm no crash, and that the category
       correctly stays "Pending" rather than silently completing.
 
-## 6. PM Visit Creation & Photo Capture — all 5 mandatory categories
+## 8. PM Visit Creation & Photo Capture — all 5 mandatory categories
 
 For a fresh visit at `POP-CHN-001`, in order:
 
@@ -146,7 +283,7 @@ For a fresh visit at `POP-CHN-001`, in order:
 - [ ] Take all 5 photos back-to-back quickly (stress the camera/GPS
       pipeline) — confirm no file/path collisions or crashes.
 
-## 7. Offline Storage
+## 9. Offline Storage
 
 - [ ] Put the device in Airplane Mode **before** starting a visit;
       confirm the full capture flow (all 5 categories) works
@@ -161,7 +298,7 @@ For a fresh visit at `POP-CHN-001`, in order:
 - [ ] Restart the device entirely mid-visit, reopen the app — same
       check.
 
-## 8. Sync & Google Drive Upload
+## 10. Sync & Google Drive Upload
 
 - [ ] Still offline, confirm the visit becomes "Pending Sync" once all
       5 photos are confirmed, and Submit queues it without erroring
@@ -186,7 +323,7 @@ For a fresh visit at `POP-CHN-001`, in order:
 - [ ] Resubmitting an already-"Submitted" visit does nothing (no
       second upload).
 
-## 9. Dispose-race regression (confirms this session's bug fix)
+## 11. Dispose-race regression (confirms this session's bug fix)
 
 - [ ] On the Dashboard screen, start a pull-to-refresh, then
       immediately navigate back before it finishes loading — confirm
@@ -199,13 +336,13 @@ For a fresh visit at `POP-CHN-001`, in order:
 - [ ] Tap "Download MIS Report," then immediately navigate away before
       it finishes — confirm no crash.
 
-## 10. Dashboard (Districts / Engineers)
+## 12. Dashboard (Districts / Engineers)
 
 - [ ] Districts tab: overall summary card and per-district compliance
       % render correctly; expanding a district shows per-POP
       Completed/Pending status and, for an incomplete POP, the exact
       missing category names.
-- [ ] After completing the visit in §6-8 above, refresh the Dashboard
+- [ ] After completing the visit in §8-10 above, refresh the Dashboard
       and confirm `POP-CHN-001` now shows as Completed/Compliant (only
       once the sync actually succeeds — if Drive isn't configured,
       confirm it correctly still shows Pending/Sync Failed, since the
@@ -218,17 +355,17 @@ For a fresh visit at `POP-CHN-001`, in order:
 - [ ] Pull-to-refresh with Wi-Fi off shows a clear error, not a blank
       screen or crash.
 
-## 11. POP Visit History
+## 13. POP Visit History
 
 - [ ] Tapping a POP row from the Dashboard, or "View Visit History"
       from POP Selection, opens the history screen for that POP.
 - [ ] Shows the District › Block › GP breadcrumb correctly.
-- [ ] The test visit from §6-8 appears (once synced) with its correct
+- [ ] The test visit from §8-10 appears (once synced) with its correct
       category present/missing breakdown and a visit date.
 - [ ] Multiple visits for the same POP render most-recent-first without
       layout overflow on the real screen.
 
-## 12. MIS Excel Download
+## 14. MIS Excel Download
 
 - [ ] On the Dashboard's AppBar, tap "Download MIS Report" — icon
       swaps to a spinner, button disables while downloading.
@@ -242,12 +379,12 @@ For a fresh visit at `POP-CHN-001`, in order:
       this feature).
 - [ ] Open the file in a real spreadsheet app (Excel/Sheets/WPS) and
       confirm it opens correctly and the columns/rows look right,
-      including the test visit from §6-8 once it's synced.
+      including the test visit from §8-10 once it's synced.
 - [ ] Turn off connectivity and tap the button again — confirm a clear
       network-error SnackBar, not a crash.
-- [ ] Tap the button, then immediately navigate away — see §9.
+- [ ] Tap the button, then immediately navigate away — see §11.
 
-## 13. Final regression pass
+## 15. Final regression pass
 
 - [ ] Nothing above affected GPS watermark text accuracy, offline
       storage integrity, or the existing Dashboard compliance numbers
@@ -256,10 +393,112 @@ For a fresh visit at `POP-CHN-001`, in order:
       code running on the device (no uncommitted device-only patches
       left in place).
 
-## 14. Recording results
+## 16. Recording results
 
 For each numbered item above, record **PASS**, **FAIL** (with repro
 steps), or **BLOCKED** (environment couldn't test it, e.g. no second
 device for a multi-device scenario). File a FAIL as a bug with device
 model + Android version + exact repro steps — the kind of detail none
 of this project's automated tests can supply.
+
+## 17. What to capture at each step
+
+Capture as you go, not retroactively — a crash's exact `logcat`
+output is only available while it's still in the buffer.
+
+- **Screenshot, every step below** (not just failures): Login success
+  (Profile screen), each of the 5 photo review screens (showing the
+  watermark banner), the Dashboard's Districts and Engineers tabs, the
+  POP Visit History screen, the MIS download success SnackBar, and
+  the opened `.xlsx` file in a spreadsheet app.
+- **`adb logcat` around every capture/GPS/sync/submit action**, filtered
+  to this app, running continuously in a second terminal:
+  ```bash
+  adb logcat --pid=$(adb shell pidof -s com.tanfinet.mobile_app)
+  ```
+  Save the full log for the session (`adb logcat ... > device-test.log`)
+  — this is what proves whether a crash is the dispose-race bug from
+  §11, something in `image_picker`/`geolocator`, or something new.
+- **The running backend terminal's output**, for every sync/Drive
+  attempt (§10) — it shows the exact request received and the
+  Drive service's success/failure detail, which the phone's own UI
+  deliberately only shows a simplified version of.
+- **For a real Google Drive test**: a screenshot of the actual Drive
+  folder tree showing the created `TANFINET PM Monitoring/Chennai/
+  Sholinganallur/Semmancheri GP/POP-CHN-001/PM Visits/<date>/
+  <visit id>/` path and its 5 files.
+- **For the MIS download (§14)**: the saved `.xlsx` file itself, pulled
+  off the device if useful for comparison with a backend-generated
+  copy:
+  ```bash
+  adb shell run-as com.tanfinet.mobile_app \
+    cat files/mis_reports/mis_export_<year>-<month>.xlsx > mis_export_from_device.xlsx
+  ```
+  (requires a debug build; `run-as` doesn't work against a release
+  build on a non-rooted device — if that's a problem, just verify via
+  the on-device file manager/spreadsheet app instead, per §14).
+- **On any FAIL**: device model, exact Android version
+  (`adb shell getprop ro.build.version.release`), the full `logcat`
+  excerpt around the failure, and exact repro steps (which POP, which
+  category, online/offline, etc.).
+
+## 18. PASS / FAIL table
+
+Copy this into your test report and fill in **Result** (PASS / FAIL /
+BLOCKED) and **Notes** as you go. "DEVICE TEST REQUIRED" items have
+never been exercised in any form before this pass; the others already
+have automated/partial coverage (see §3) and this is their first
+real-device confirmation.
+
+| # | Area | Device-only? | Result | Notes |
+|---|---|---|---|---|
+| 0 | Device meets requirements (§0) | DEVICE TEST REQUIRED | | |
+| 1 | APK builds successfully (§1) | DEVICE/BUILD-MACHINE REQUIRED | | |
+| 2 | APK installs on the device (§2) | DEVICE TEST REQUIRED | | |
+| 5a | Login screen opens, validation works | | | |
+| 5b | Login succeeds as ENG001/9876543210 | | | |
+| 5c | Wrong-credentials error is clear | | | |
+| 5d | Logout → re-login works | | | |
+| 5e | Real keyboard/autofill behave correctly | DEVICE TEST REQUIRED | | |
+| 6a | District → Block → GP → POP cascade works | | | |
+| 6b | Inactive POP (`POP-CHN-002`) handled correctly | | | |
+| 7a | Camera permission prompt appears | DEVICE TEST REQUIRED | | |
+| 7b | Permission denied / denied-forever handled | DEVICE TEST REQUIRED | | |
+| 7c | Location Services off handled | DEVICE TEST REQUIRED | | |
+| 7d | Real GPS fix latency / indoor behavior | DEVICE TEST REQUIRED | | |
+| 8a | Capture: POP Rack | DEVICE TEST REQUIRED | | |
+| 8b | Capture: UPS & Battery (fresh GPS fix) | DEVICE TEST REQUIRED | | |
+| 8c | Capture: Busbar | DEVICE TEST REQUIRED | | |
+| 8d | Capture: Earth Pit Chamber | DEVICE TEST REQUIRED | | |
+| 8e | Capture: Earth Pit Open with Rod → ready for submission | DEVICE TEST REQUIRED | | |
+| 8f | Cancel camera mid-capture leaves category Pending | DEVICE TEST REQUIRED | | |
+| 8g | Camera permission denial handled | DEVICE TEST REQUIRED | | |
+| 8h | Watermark banner on correct edge (EXIF risk, see §11/data-model.md) | DEVICE TEST REQUIRED | | |
+| 8i | Rapid back-to-back captures, no crash | DEVICE TEST REQUIRED | | |
+| 9a | Full offline capture (Airplane Mode) | DEVICE TEST REQUIRED | | |
+| 9b | App backgrounded mid-visit resumes correctly | DEVICE TEST REQUIRED | | |
+| 9c | App force-stopped mid-visit resumes correctly | DEVICE TEST REQUIRED | | |
+| 9d | Device restarted mid-visit resumes correctly | DEVICE TEST REQUIRED | | |
+| 10a | Offline submit queues as Pending Sync | | | |
+| 10b | Sync without Drive configured fails cleanly | | | |
+| 10c | Sync with Drive configured succeeds end-to-end | DEVICE TEST REQUIRED (needs real credentials) | | |
+| 10d | Connectivity drop mid-sync handled | DEVICE TEST REQUIRED | | |
+| 10e | Duplicate-submit guard (rapid double-tap) | | | |
+| 10f | Resubmitting a Submitted visit is a no-op | | | |
+| 11a | Back-navigation mid-Dashboard-refresh, no crash | DEVICE TEST REQUIRED | | |
+| 11b | Back-navigation mid-photo-capture, no crash | DEVICE TEST REQUIRED | | |
+| 11c | Back-navigation mid-MIS-download, no crash | DEVICE TEST REQUIRED | | |
+| 12a | Districts tab renders correctly | | | |
+| 12b | Test visit reflected after sync | | | |
+| 12c | Engineers tab renders correctly | | | |
+| 12d | Fortnight navigation works with real touch | | | |
+| 12e | Rotation, no layout overflow | DEVICE TEST REQUIRED | | |
+| 12f | Pull-to-refresh offline error is clear | | | |
+| 13a | POP Visit History opens and shows correct context | | | |
+| 13b | Multiple visits render without overflow | DEVICE TEST REQUIRED | | |
+| 14a | Download button: loading/disabled state | | | |
+| 14b | Success SnackBar with file path | | | |
+| 14c | File discoverable/openable on-device | DEVICE TEST REQUIRED | | |
+| 14d | File opens correctly in a spreadsheet app | DEVICE TEST REQUIRED | | |
+| 14e | Offline download error is clear | | | |
+| 15 | Final regression (no unrelated areas affected) | | | |
