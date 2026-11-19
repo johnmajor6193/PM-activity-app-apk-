@@ -718,7 +718,7 @@ Before the first real Android device/emulator pass, the full backend
 and mobile implementation was reviewed specifically for defects that
 only a real device's timing/latency would expose (not style or
 hypothetical future issues). The backend had none. The mobile app had
-one genuine, fixed bug:
+two genuine, fixed bugs:
 
 **Dispose-after-use crash in every `ChangeNotifier` controller**
 (`AuthController`, `DashboardController`, `MisReportController`,
@@ -741,6 +741,27 @@ regression test
 capturePhoto is awaiting GPS does not throw") — confirmed to fail with
 the old `Bad state: A PmVisitController was used after being disposed`
 error before the fix, and pass after it.
+
+**The release app could not reach the backend at all.**
+`android/app/src/main/AndroidManifest.xml` declared no
+`android.permission.INTERNET` — only the debug/profile build
+variants' own manifests had it (added there only for the Flutter
+tool's dev-time use, e.g. hot reload), and none of the app's plugins
+(`http`, `connectivity_plus`, `geolocator`, `image_picker`, `sqflite`)
+declare it either. A release build (`flutter build apk`, the normal
+way to produce an installable APK) therefore had **zero** network
+permission. Separately, nothing declared
+`android:usesCleartextTraffic="true"`, and the backend is plain
+`http://` by design in this dev/LAN setup (`ApiConfig.baseUrl`) —
+Android 9+ blocks cleartext HTTP by default, so even a debug build
+(which already had `INTERNET` via its own manifest) would still have
+been unable to reach the backend. **Fixed** by declaring both in the
+main manifest, so every build type can reach the `http://` backend.
+Not independently verified by actually running `flutter build apk`
+in this environment (no Android SDK here) — only the manifest's XML
+validity and the standard, well-documented nature of this exact fix
+were confirmed; the first real build on a machine with the Android
+SDK is this fix's first true verification.
 
 **One risk identified but deliberately left unfixed, pending real-device
 evidence**: `WatermarkService.applyWatermark` (`watermark_service.dart`)

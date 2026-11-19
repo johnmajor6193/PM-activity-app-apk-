@@ -52,6 +52,21 @@ or `sdkmanager` command-line tools) — **not** this sandboxed
 environment, which has no Android SDK and cannot build or verify this
 step. **DEVICE/BUILD-MACHINE TEST REQUIRED.**
 
+**A manifest fix was required before this step could work at all**:
+`android/app/src/main/AndroidManifest.xml` had no
+`android.permission.INTERNET` (only the debug/profile variants had it,
+for the Flutter tool's own dev-time use — a **release** build had
+none, from any source: no plugin used here declares it either) and no
+`android:usesCleartextTraffic="true"`, even though the whole app talks
+to the dev backend over plain `http://` (`ApiConfig.baseUrl`). Android
+9+ blocks cleartext HTTP by default, so even a debug build (which
+already had INTERNET via its own manifest) would still have been
+unable to reach the backend. Both are now declared in the main
+manifest, so every build type (debug/profile/release) can reach an
+`http://` backend. This was the one genuine blocker found while
+preparing for this pass — see `docs/data-model.md`
+("Pre-device-testing review (bug fix)") for the full writeup.
+
 ```bash
 cd mobile_app
 flutter pub get
